@@ -1,0 +1,28 @@
+experiment:
+  name: "sentinel2_srgan_x4"
+  save_dir: "checkpoints"
+
+data:
+  train_hr_dir: "data/processed/train/hr"
+  train_lr_dir: "data/processed/train/lr"
+  val_hr_dir: "data/processed/val/hr"
+  val_lr_dir: "data/processed/val/lr"
+  in_channels: 4          # 4-band: Red, Green, Blue, Near-Infrared (NIR)
+  scale_factor: 4         # 10m -> 2.5m resolution
+  patch_size: 256         # HR patch size
+  lr_patch_size: 64       # LR patch size (256 / 4)
+
+training:
+  epochs: 30
+  batch_size: 8           # Colab T4 GPU friendly
+  num_workers: 2
+  lr_generator: 0.0001    # Fine-tuning learning rate (1e-4)
+  lr_discriminator: 0.0001
+  b1: 0.9
+  b2: 0.999
+  lambda_content: 1.0     # L1 reconstruction fidelity
+  lambda_adv: 0.001       # Adversarial sharpness
+  lambda_sam: 0.05        # Spectral Angle Mapper (color/NDVI fidelity)
+  lambda_edge: 0.05       # Edge & boundary gradient loss
+  save_every: 5           # Save checkpoint every N epochs
+  device: "cuda"          # cuda if GPU available, otherwise cpu
