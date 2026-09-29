@@ -86,7 +86,8 @@ async def predict_super_resolution(req: PredictRequest):
             scale_factor=req.scale_factor,
             estimate_uncertainty=req.estimate_uncertainty,
             reference_path=req.reference_path,
-            run_wald_validation=req.run_wald_validation
+            run_wald_validation=req.run_wald_validation,
+            baseline_offset=req.baseline_offset
         )
 
         uncertainty = None
@@ -111,6 +112,9 @@ async def predict_super_resolution(req: PredictRequest):
             uncertainty_map_url=res.get("uncertainty_map_url"),
             metrics=res.get("metrics"),
             uncertainty=uncertainty,
+            used_synthetic_data=res.get("used_synthetic_data", False),
+            model_untrained=res.get("model_untrained", False),
+            warnings=res.get("warnings", []),
             execution_time_seconds=res["execution_time_seconds"],
             metadata=res["metadata"]
         )

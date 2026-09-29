@@ -7,7 +7,7 @@
     "install:all": "npm install && cd server && npm install && cd ../client && npm install",
     "dev:server": "cd server && npm run dev",
     "dev:client": "cd client && npm run dev",
-    "dev:ml": "cd ml-service && uvicorn api.app:app --host 127.0.0.1 --port 8000 --reload",
+    "dev:ml": "cd ml-service && .\\venv\\Scripts\\uvicorn.exe api.app:app --host 127.0.0.1 --port 8000 --reload",
     "dev": "concurrently -n \"SERVER,CLIENT,ML\" -c \"blue,magenta,green\" \"npm run dev:server\" \"npm run dev:client\" \"npm run dev:ml\"",
     "start:server": "cd server && npm start",
     "build:client": "cd client && npm run build"

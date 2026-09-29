@@ -18,8 +18,14 @@ io.on('connection', (socket) => {
   console.log(`[WebSocket] Client connected: ${socket.id}`);
 
   socket.on('join_job', (jobId) => {
-    socket.join(`job_${jobId}`);
-    console.log(`[WebSocket] Client ${socket.id} subscribed to job_${jobId}`);
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (typeof jobId === 'string' && uuidRegex.test(jobId)) {
+      const roomName = `job_${jobId}`;
+      socket.join(roomName);
+      console.log(`[WebSocket] Client ${socket.id} subscribed to ${roomName}`);
+    } else {
+      console.log(`[WebSocket] Client ${socket.id} attempted to join invalid jobId: ${jobId}`);
+    }
   });
 
   socket.on('disconnect', () => {

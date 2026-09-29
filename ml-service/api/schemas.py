@@ -17,6 +17,7 @@ class PredictRequest(BaseModel):
     bands: List[str] = Field(default=["B04", "B03", "B02"], description="Bands to process (RGB or RGB+NIR)")
     estimate_uncertainty: bool = Field(default=True, description="Whether to produce uncertainty variance map via TTA ensemble")
     preserve_georeference: bool = Field(default=True, description="Preserve CRS and Affine transform in output GeoTIFF")
+    baseline_offset: Optional[float] = Field(None, description="Force a specific BOA DN offset if tags are missing")
 
 class UncertaintySummary(BaseModel):
     mean_uncertainty: float
@@ -37,6 +38,9 @@ class PredictResponse(BaseModel):
     uncertainty_map_url: Optional[str] = None
     metrics: Optional[Dict[str, Any]] = None
     uncertainty: Optional[UncertaintySummary] = None
+    used_synthetic_data: bool = False
+    model_untrained: bool = False
+    warnings: List[str] = []
     execution_time_seconds: float
     metadata: Dict[str, Any] = {}
 

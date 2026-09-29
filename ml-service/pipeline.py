@@ -31,16 +31,15 @@ class SatelliteSuperResolutionPipeline:
         self.output_dir = os.path.abspath(output_dir)
         os.makedirs(self.output_dir, exist_ok=True)
 
-    def load_raster(self, image_path: str, max_extent: int = 384) -> Tuple[np.ndarray, Dict[str, Any]]:
+    def load_raster(self, image_path: str, max_extent: int = 384) -> Tuple[np.ndarray, Dict[str, Any], bool]:
         """
-        Loads raster or image into numpy array of shape (C, H, W) and extracts geospatial metadata.
-        Uses rasterio for multi-spectral GeoTIFFs (preserving CRS and Affine transform).
-        Falls back to PIL for standard PNG/JPEG images.
+        Returns (array, geo_meta, used_synthetic).
+        used_synthetic=True when the real file could not be loaded.
         """
         if not os.path.exists(image_path):
             arr = self._generate_synthetic_sentinel2_scene()
             meta = GeoReferenceHandler.get_default_sentinel_metadata(arr.shape[1], arr.shape[2])
-            return arr, meta
+            return arr, meta, True
 
         # Try loading with rasterio for multi-spectral GIS rasters
         try:
@@ -53,7 +52,8 @@ class SatelliteSuperResolutionPipeline:
                     "nodata": src.nodata,
                     "count": src.count,
                     "driver": src.driver,
-                    "dtype": str(src.dtypes[0])
+                    "dtype": str(src.dtypes[0]),
+                    "tags": src.tags()
                 }
 
                 if w > max_extent or h > max_extent:
@@ -64,19 +64,18 @@ class SatelliteSuperResolutionPipeline:
                     read_h = min(h - row_off, max_extent)
                     from rasterio.windows import Window
                     win = Window(col_off, row_off, read_w, read_h)
-                    arr = src.read(window=win).astype(np.float32)
+                    arr = src.read(window=win)
                     meta["transform"] = rasterio.windows.transform(win, src.transform)
                 else:
-                    arr = src.read().astype(np.float32)
+                    arr = src.read()
 
                 # Ensure shape is (C, H, W)
                 if arr.ndim == 2:
                     arr = np.expand_dims(arr, axis=0)
 
-                return arr, meta
+                return arr, meta, False
         except Exception as e:
-            # Fallback to PIL
-            pass
+            print(f"[Rasterio Warning] Could not open with rasterio: {e}. Trying PIL...")
 
         try:
             with PILImage.open(image_path) as img:
@@ -86,7 +85,7 @@ class SatelliteSuperResolutionPipeline:
                     top = (h - max_extent) // 2
                     img = img.crop((left, top, left + max_extent, top + max_extent))
                 
-                arr = np.array(img).astype(np.float32)
+                arr = np.array(img)
                 if arr.ndim == 2:
                     arr_chw = np.expand_dims(arr, axis=0)
                 elif arr.ndim == 3:
@@ -96,12 +95,12 @@ class SatelliteSuperResolutionPipeline:
                     arr_chw = np.expand_dims(arr, axis=0)
 
                 meta = GeoReferenceHandler.get_default_sentinel_metadata(arr_chw.shape[1], arr_chw.shape[2])
-                return arr_chw, meta
+                return arr_chw, meta, False
         except Exception as e:
             print(f"[Loader Warning] {e}. Falling back to synthetic scene.")
             arr = self._generate_synthetic_sentinel2_scene()
             meta = GeoReferenceHandler.get_default_sentinel_metadata(arr.shape[1], arr.shape[2])
-            return arr, meta
+            return arr, meta, True
 
     def _generate_synthetic_sentinel2_scene(self) -> np.ndarray:
         """Creates a 4-band synthetic 10m Sentinel-2 scene (256x256)."""
@@ -128,21 +127,40 @@ class SatelliteSuperResolutionPipeline:
         reference_path: Optional[str] = None,
         run_wald_validation: bool = False,
         tile_size: int = 256,
-        overlap: int = 32
+        overlap: int = 32,
+        baseline_offset: Optional[float] = None
     ) -> Dict[str, Any]:
         start_time = time.time()
 
         # 1. Load raster and geospatial metadata
-        raw_data, geo_meta = self.load_raster(image_path)
+        raw_data, geo_meta, used_synthetic = self.load_raster(image_path)
+        pipeline_warnings = []
+        if used_synthetic:
+            pipeline_warnings.append(
+                "Input file could not be loaded — results are based on a synthetic Sentinel-2 scene and are NOT representative of real data."
+            )
         channels, orig_h, orig_w = raw_data.shape
 
         # 2. Normalize reflectance (preserves Sentinel-2 BOA 10000 DN calibration)
-        norm_data, norm_stats = normalize_sentinel2(raw_data)
+        norm_data, norm_stats = normalize_sentinel2(
+            raw_data, 
+            tags=geo_meta.get("tags"),
+            baseline_offset=baseline_offset
+        )
+        
+        if norm_stats.get("warning"):
+            pipeline_warnings.append(norm_stats["warning"])
+        print(f"Applied BOA offset: {norm_stats.get('offset', 0.0)}")
 
         # 3. Model selection
+        model_untrained = False
         model_key = model_name.lower().replace("-", "_")
         if model_key == "srgan":
             model = SentinelSRGAN(scale_factor=scale_factor, in_channels=channels)
+            if getattr(model, 'weights_path', None) is None:
+                model_untrained = True
+                pipeline_warnings.append("SRGAN checkpoint not found. Model is untrained. Falling back to HighFrequencySplineRefiner.")
+                model = HighFrequencySplineRefiner(scale_factor=scale_factor, in_channels=channels)
         elif model_key == "bicubic":
             model = BicubicBaseline(scale_factor=scale_factor, in_channels=channels)
         else:
@@ -166,9 +184,15 @@ class SatelliteSuperResolutionPipeline:
 
         # 5. Export Files with GeoReferencing & Visual Previews
         job_tag = int(time.time())
+        
+        # Export input preview for comparison first to capture 2-98 stretch bounds
+        input_filename = f"input_raw_{job_tag}.png"
+        input_filepath = os.path.join(self.output_dir, input_filename)
+        _, stretch_bounds = GeoTiffExporter.export_preview_png(norm_data, input_filepath)
+        
         sr_filename = f"enhanced_sr_{model_name}_{job_tag}.png"
         sr_filepath = os.path.join(self.output_dir, sr_filename)
-        GeoTiffExporter.export_preview_png(sr_result, sr_filepath)
+        GeoTiffExporter.export_preview_png(sr_result, sr_filepath, vmin_vmax=stretch_bounds)
 
         # Export full GeoTIFF with CRS and updated affine geotransform (10m -> 2.5m)
         tif_filename = f"enhanced_sr_{model_name}_{job_tag}.tif"
@@ -181,23 +205,18 @@ class SatelliteSuperResolutionPipeline:
             scale_factor=scale_factor
         )
 
-        # Export input preview for comparison
-        input_filename = f"input_raw_{job_tag}.png"
-        input_filepath = os.path.join(self.output_dir, input_filename)
-        GeoTiffExporter.export_preview_png(norm_data, input_filepath)
-
         u_filename = None
         if u_map is not None:
             u_rgb = SpatialUncertaintyEstimator.generate_heatmap_rgb(u_map)
             u_filename = f"uncertainty_heatmap_{job_tag}.png"
             u_filepath = os.path.join(self.output_dir, u_filename)
-            GeoTiffExporter.export_preview_png(u_rgb, u_filepath, is_normalized=False)
+            GeoTiffExporter.export_preview_png(u_rgb, u_filepath, stretch_contrast=False)
 
         # 6. Scientific Validation & Baseline Comparison (NO fabricated noise simulation!)
         if reference_path and os.path.exists(reference_path):
             # True paired HR reference evaluation with bicubic baseline benchmarking
-            ref_raw, _ = self.load_raster(reference_path)
-            ref_norm, _ = normalize_sentinel2(ref_raw)
+            ref_raw, ref_meta, _ = self.load_raster(reference_path)
+            ref_norm, _ = normalize_sentinel2(ref_raw, tags=ref_meta.get("tags"))
             metrics = RemoteSensingMetrics.evaluate_with_baseline(
                 sr_result,
                 norm_data,
@@ -238,6 +257,9 @@ class SatelliteSuperResolutionPipeline:
             "uncertainty_map_url": f"/static/outputs/{u_filename}" if u_filename else None,
             "metrics": metrics,
             "uncertainty": u_stats,
+            "used_synthetic_data": used_synthetic,
+            "model_untrained": model_untrained,
+            "warnings": pipeline_warnings,
             "execution_time_seconds": exec_time,
             "metadata": {
                 "source": "Copernicus Data Space Ecosystem (CDSE) Sentinel-2",

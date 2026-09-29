@@ -19,8 +19,12 @@ class MLBridgeService {
   }
 
   async getModels() {
-    const response = await this.client.get('/api/v1/models');
-    return response.data;
+    try {
+      const response = await this.client.get('/api/v1/models');
+      return response.data;
+    } catch (error) {
+      return { models: [], error: error.message };
+    }
   }
 
   async runSuperResolution({
@@ -30,7 +34,8 @@ class MLBridgeService {
     estimateUncertainty = true,
     bands = ['B04', 'B03', 'B02'],
     referencePath = null,
-    runWaldValidation = false
+    runWaldValidation = false,
+    baselineOffset = null
   }) {
     const payload = {
       image_path: imagePath,
@@ -41,6 +46,9 @@ class MLBridgeService {
       reference_path: referencePath || null,
       run_wald_validation: Boolean(runWaldValidation)
     };
+    if (baselineOffset !== null) {
+      payload.baseline_offset = baselineOffset;
+    }
 
     const response = await this.client.post('/api/v1/predict', payload);
     return response.data;

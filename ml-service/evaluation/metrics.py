@@ -9,7 +9,7 @@ Implements standard Earth Observation metrics:
 """
 
 import numpy as np
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 class RemoteSensingMetrics:
     @staticmethod

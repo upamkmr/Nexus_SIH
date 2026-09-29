@@ -6,6 +6,7 @@ Upscales 4x (10m -> 2.5m GSD).
 
 import os
 import numpy as np
+from typing import Optional, Dict, Any, Tuple
 try:
     from ..base_model import BaseSuperResolutionModel
 except Exception:
@@ -41,6 +42,7 @@ try:
         """
         def __init__(self, in_c=4, out_c=4, n_res_blocks=16, scale=4):
             super().__init__()
+            self.scale = scale
             self.head = nn.Sequential(
                 nn.Conv2d(in_c, 64, kernel_size=9, padding=4),
                 nn.PReLU()
@@ -60,13 +62,18 @@ try:
                 nn.PReLU()
             )
             self.tail = nn.Conv2d(64, out_c, kernel_size=9, padding=4)
+            nn.init.zeros_(self.tail.weight)
+            nn.init.zeros_(self.tail.bias)
 
         def forward(self, x):
+            skip = torch.nn.functional.interpolate(x, scale_factor=self.scale, mode='bicubic', align_corners=False)
             h = self.head(x)
             b = self.body(h)
             t = self.trunk(b) + h
             u = self.upsample(t)
-            return torch.sigmoid(self.tail(u))
+            residual = self.tail(u)
+            out = skip + residual
+            return torch.clamp(out, 0.0, 1.0)
 
 except ImportError:
     nn = None
@@ -96,16 +103,51 @@ class SentinelSRGAN(BaseSuperResolutionModel):
     def _init_network(self):
         """Initializes PyTorch deep residual model if available and loads pretrained weights."""
         if torch is not None and SRGANGenerator is not None:
-            # Sentinel-2 network is natively configured for 4 bands (RGB + NIR 10m bands)
-            model_channels = 4
-            self.model = SRGANGenerator(in_c=model_channels, out_c=model_channels, scale=self.scale_factor)
             if self.weights_path and os.path.exists(self.weights_path):
                 try:
-                    state_dict = torch.load(self.weights_path, map_location="cpu")
-                    self.model.load_state_dict(state_dict)
-                    print(f"[SRGAN] Successfully loaded trained weights from: {self.weights_path}")
+                    checkpoint = torch.load(self.weights_path, map_location="cpu")
+                    if isinstance(checkpoint, dict) and "state_dict" in checkpoint and "in_channels" in checkpoint:
+                        ckpt_channels = checkpoint["in_channels"]
+                        if ckpt_channels != self.in_channels:
+                            print(f"[SRGAN Warning] Mismatch! Checkpoint built for {ckpt_channels} bands, input has {self.in_channels} bands.")
+                            self.weights_path = None
+                            return
+                        self.model = SRGANGenerator(in_c=ckpt_channels, out_c=ckpt_channels, scale=self.scale_factor)
+                        self.model.load_state_dict(checkpoint["state_dict"])
+                        print(f"[SRGAN] Loaded weights from: {self.weights_path} ({ckpt_channels} channels)")
+                    else:
+                        # Legacy format fallback
+                        # Strip "module." prefix if saved with DataParallel
+                        new_state_dict = {}
+                        for k, v in checkpoint.items():
+                            name = k[7:] if k.startswith("module.") else k
+                            new_state_dict[name] = v
+                        checkpoint = new_state_dict
+                        
+                        ckpt_channels = None
+                        for v in checkpoint.values():
+                            if getattr(v, "ndim", 0) == 4:
+                                ckpt_channels = v.shape[1]
+                                break
+                                
+                        if ckpt_channels is None:
+                            print("[SRGAN Warning] Could not infer channels from legacy checkpoint. Fallback.")
+                            self.weights_path = None
+                            return
+                        
+                        if self.in_channels != ckpt_channels:
+                            print(f"[SRGAN Warning] Legacy checkpoint requires {ckpt_channels} bands, input has {self.in_channels}. Fallback.")
+                            self.weights_path = None
+                            return
+                        
+                        self.model = SRGANGenerator(in_c=ckpt_channels, out_c=ckpt_channels, scale=self.scale_factor)
+                        self.model.load_state_dict(checkpoint)
+                        print(f"[SRGAN] Loaded legacy weights from: {self.weights_path} (inferred {ckpt_channels} channels)")
                 except Exception as e:
                     print(f"[SRGAN Warning] Could not load state_dict from {self.weights_path}: {e}")
+                    self.weights_path = None
+            else:
+                self.model = SRGANGenerator(in_c=self.in_channels, out_c=self.in_channels, scale=self.scale_factor)
             self.model.eval()
         else:
             self.model = None

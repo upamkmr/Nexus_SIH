@@ -15,7 +15,8 @@ import {
   FileCheck,
   Copy,
   Check,
-  Maximize2
+  Maximize2,
+  AlertTriangle
 } from 'lucide-react';
 import imageService from '../services/imageService';
 
@@ -29,6 +30,7 @@ export default function ComparisonPage() {
   const [copiedCrs, setCopiedCrs] = useState(false);
   const [containerDimensions, setContainerDimensions] = useState({ width: 0, height: 0 });
   const containerRef = useRef(null);
+  const isDragging = useRef(false);
 
   // If page was loaded directly without navigation state, fetch the latest completed run
   useEffect(() => {
@@ -59,20 +61,26 @@ export default function ComparisonPage() {
     return () => window.removeEventListener('resize', updateSize);
   }, []);
 
-  const handleMouseMove = (e) => {
-    if (!containerRef.current) return;
+  // Pointer-capture drag: slider only moves while pointer is held down
+  const calcPercent = (clientX) => {
+    if (!containerRef.current) return sliderPosition;
     const rect = containerRef.current.getBoundingClientRect();
-    const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
-    const percent = Math.max(0, Math.min((x / rect.width) * 100, 100));
-    setSliderPosition(percent);
+    return Math.max(0, Math.min(((clientX - rect.left) / rect.width) * 100, 100));
   };
 
-  const handleTouchMove = (e) => {
-    if (!containerRef.current || !e.touches[0]) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    const x = Math.max(0, Math.min(e.touches[0].clientX - rect.left, rect.width));
-    const percent = Math.max(0, Math.min((x / rect.width) * 100, 100));
-    setSliderPosition(percent);
+  const handlePointerDown = (e) => {
+    isDragging.current = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setSliderPosition(calcPercent(e.clientX));
+  };
+
+  const handlePointerMove = (e) => {
+    if (!isDragging.current) return;
+    setSliderPosition(calcPercent(e.clientX));
+  };
+
+  const handlePointerUp = () => {
+    isDragging.current = false;
   };
 
   // Image paths
@@ -112,7 +120,49 @@ export default function ComparisonPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      {/* Synthetic data warning banner */}
+      {result?.used_synthetic_data && (
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', gap: '0.75rem',
+          padding: '0.9rem 1.25rem',
+          backgroundColor: 'rgba(234, 179, 8, 0.12)',
+          border: '1px solid rgba(234, 179, 8, 0.4)',
+          borderRadius: 'var(--radius-md)',
+          color: '#fbbf24'
+        }}>
+          <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: '0.1rem' }} />
+          <div>
+            <strong>Synthetic Scene Warning</strong>
+            <div style={{ fontSize: '0.85rem', marginTop: '0.2rem', opacity: 0.85 }}>
+              {result.warnings?.length > 0
+                ? result.warnings[0]
+                : 'Results were generated from a synthetic Sentinel-2 scene — not real satellite data.'}
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Untrained model warning banner */}
+      {result?.model_untrained && (
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', gap: '0.75rem',
+          padding: '0.9rem 1.25rem',
+          backgroundColor: 'rgba(234, 179, 8, 0.12)',
+          border: '1px solid rgba(234, 179, 8, 0.4)',
+          borderRadius: 'var(--radius-md)',
+          color: '#fbbf24'
+        }}>
+          <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: '0.1rem' }} />
+          <div>
+            <strong>Untrained Model Warning</strong>
+            <div style={{ fontSize: '0.85rem', marginTop: '0.2rem', opacity: 0.85 }}>
+              The selected SRGAN model does not have trained weights available. It is falling back to a spline refiner or using random weights. Train the model first to see actual deep learning results.
+            </div>
+          </div>
+        </div>
+      )}
       {/* Header & Controls Bar */}
+
       <div style={{
         display: 'flex',
         flexWrap: 'wrap',
@@ -242,15 +292,17 @@ export default function ComparisonPage() {
       {/* Main Interactive Split-Screen Stage */}
       <div 
         ref={containerRef}
-        onMouseMove={handleMouseMove}
-        onTouchMove={handleTouchMove}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
         style={{
           position: 'relative',
           width: '100%',
           height: '620px',
           borderRadius: 'var(--radius-xl)',
           overflow: 'hidden',
-          cursor: 'ew-resize',
+          cursor: isDragging.current ? 'ew-resize' : 'col-resize',
           userSelect: 'none',
           boxShadow: 'var(--shadow-lg)',
           border: '1px solid var(--border-glow)',
@@ -436,40 +488,40 @@ export default function ComparisonPage() {
 
         <div>
           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '0.2rem' }}>
-            Spectral SAM Consistency
+            {result?.metrics?.has_reference ? 'Spectral SAM Consistency' : 'NDVI Spectral Err'}
           </span>
           <span style={{ fontWeight: 600, color: 'var(--accent-emerald)', fontFamily: 'var(--font-mono)', fontSize: '0.95rem' }}>
             {result?.metrics?.has_reference && (result?.metrics?.sam_deg != null || result?.metrics?.sam != null)
               ? `${(result.metrics.sam_deg ?? result.metrics.sam).toFixed(2)}°` 
               : (result?.metrics?.no_reference_assessment?.ndvi_spectral_consistency_error != null
-                  ? `NDVI err: ${result.metrics.no_reference_assessment.ndvi_spectral_consistency_error}`
-                  : 'N/A (Unpaired)')}
+                  ? `${result.metrics.no_reference_assessment.ndvi_spectral_consistency_error}`
+                  : 'N/A')}
           </span>
         </div>
 
         <div>
           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '0.2rem' }}>
-            Peak SNR Metric
+            {result?.metrics?.has_reference ? 'Peak SNR Metric' : 'Spatial Frequency'}
           </span>
           <span style={{ fontWeight: 600, color: 'var(--accent-cyan)', fontFamily: 'var(--font-mono)', fontSize: '0.95rem' }}>
             {result?.metrics?.has_reference && result?.metrics?.psnr != null
               ? `${result.metrics.psnr.toFixed(2)} dB ${result.metrics.baseline_comparison ? `(+${result.metrics.baseline_comparison.psnr_delta_db} dB)` : ''}`
               : (result?.metrics?.no_reference_assessment?.spatial_frequency != null
-                  ? `SF: ${result.metrics.no_reference_assessment.spatial_frequency}`
-                  : 'N/A (Unpaired)')}
+                  ? `${result.metrics.no_reference_assessment.spatial_frequency}`
+                  : 'N/A')}
           </span>
         </div>
 
         <div>
           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '0.2rem' }}>
-            Structural SSIM Index
+            {result?.metrics?.has_reference ? 'Structural SSIM Index' : 'Tenengrad Sharpness'}
           </span>
           <span style={{ fontWeight: 600, color: 'var(--accent-purple)', fontFamily: 'var(--font-mono)', fontSize: '0.95rem' }}>
             {result?.metrics?.has_reference && result?.metrics?.ssim != null
               ? `${result.metrics.ssim.toFixed(3)} ${result.metrics.baseline_comparison ? `(+${result.metrics.baseline_comparison.ssim_delta})` : ''}`
               : (result?.metrics?.no_reference_assessment?.tenengrad_sharpness_density != null
-                  ? `Tenengrad: ${result.metrics.no_reference_assessment.tenengrad_sharpness_density.toFixed(4)}`
-                  : 'N/A (Unpaired)')}
+                  ? `${result.metrics.no_reference_assessment.tenengrad_sharpness_density.toFixed(4)}`
+                  : 'N/A')}
           </span>
         </div>
 

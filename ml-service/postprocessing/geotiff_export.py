@@ -7,20 +7,43 @@ and PNG previews for web and dashboard consumption.
 import os
 import numpy as np
 from PIL import Image as PILImage
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 
 class GeoTiffExporter:
     @staticmethod
     def export_preview_png(
         array: np.ndarray,
         output_filepath: str,
-        is_normalized: bool = True
-    ) -> str:
+        stretch_contrast: bool = True,
+        vmin_vmax: Optional[Tuple[float, float]] = None
+    ) -> Tuple[str, Tuple[float, float]]:
         """
         Exports a 3-channel (RGB) or 1-channel array as a viewable PNG image.
         array shape expected: (C, H, W) or (H, W)
+        Returns: (output_filepath, (vmin, vmax) used for stretching)
         """
         os.makedirs(os.path.dirname(os.path.abspath(output_filepath)), exist_ok=True)
+
+        computed_bounds = (0.0, 1.0)
+
+        def percentile_stretch(arr, bounds=None):
+            if bounds is not None:
+                p2, p98 = bounds
+            else:
+                # Ignore 0 (NoData) when calculating percentiles
+                valid = arr[arr > 0] if np.any(arr > 0) else arr
+                if valid.size == 0:
+                    return np.zeros_like(arr, dtype=np.uint8), (0.0, 1.0)
+                p2, p98 = np.percentile(valid, (2.0, 98.0))
+                if p98 <= p2:
+                    p98 = p2 + 1e-5
+            stretched = np.clip((arr.astype(np.float32) - p2) / (p98 - p2), 0.0, 1.0)
+            return (stretched * 255.0).astype(np.uint8), (p2, p98)
+            
+        def convert_to_uint8(arr):
+            if arr.dtype == np.uint8 or arr.dtype.name == 'uint8':
+                return arr
+            return np.clip(arr * 255.0, 0, 255).astype(np.uint8)
 
         if array.ndim == 3:
             if array.shape[0] >= 3:
@@ -28,24 +51,23 @@ class GeoTiffExporter:
             else:
                 rgb = np.repeat(array[:1], 3, axis=0)
             
-            if is_normalized:
-                rgb = np.clip(rgb * 255.0, 0, 255).astype(np.uint8)
+            if stretch_contrast:
+                stretched_rgb, computed_bounds = percentile_stretch(rgb, vmin_vmax)
             else:
-                rgb = rgb.astype(np.uint8)
-            
+                stretched_rgb = convert_to_uint8(rgb)
             # Transpose to (H, W, C) for PIL
-            img_hwc = np.transpose(rgb, (1, 2, 0))
+            img_hwc = np.transpose(stretched_rgb, (1, 2, 0))
         elif array.ndim == 2:
-            if is_normalized:
-                img_hwc = np.clip(array * 255.0, 0, 255).astype(np.uint8)
+            if stretch_contrast:
+                img_hwc, computed_bounds = percentile_stretch(array, vmin_vmax)
             else:
-                img_hwc = array.astype(np.uint8)
+                img_hwc = convert_to_uint8(array)
         else:
             raise ValueError(f"Unsupported array shape: {array.shape}")
 
         img = PILImage.fromarray(img_hwc)
         img.save(output_filepath, format="PNG")
-        return output_filepath
+        return output_filepath, computed_bounds
 
     @staticmethod
     def export_geotiff(

@@ -9,42 +9,50 @@ from typing import Tuple, Optional
 def normalize_sentinel2(
     arr: np.ndarray,
     method: str = "auto",
-    percentiles: Tuple[float, float] = (2.0, 98.0)
+    percentiles: Tuple[float, float] = (2.0, 98.0),
+    tags: Optional[dict] = None,
+    baseline_offset: Optional[float] = None
 ) -> Tuple[np.ndarray, dict]:
     """
     Normalizes Sentinel-2 multi-spectral data into standard [0.0, 1.0] float32 arrays
     while preserving radiometric and physical surface reflectance integrity.
-    
-    Sentinel-2 L2A Bottom-of-Atmosphere (BOA) products use a quantification value of 10000
-    (DN = Reflectance * 10000). A value of 10000 corresponds to 100% surface reflectance (1.0).
-    
-    Args:
-        arr: Input array of shape (C, H, W) or (H, W) or (H, W, C)
-        method: "auto", "reflectance" (divide by 10000 DN / 255 uint8), or "percentile" (display only)
-        percentiles: Low and high percentiles (only used if method="percentile")
-    
-    Returns:
-        normalized_array (float32 in [0, 1]), stats_dict for exact radiometric inversion
     """
+    original_dtype = str(arr.dtype)
     arr = arr.astype(np.float32)
-    stats = {"method": method, "original_dtype": str(arr.dtype)}
+    stats = {"method": method, "original_dtype": original_dtype}
 
     if method == "auto":
-        # Detect radiometric scale:
-        # Sentinel-2 L2A 12-bit DNs typically exceed 255 and max out around 10000
-        max_val = float(np.max(arr))
-        if max_val > 255.0:
-            method = "reflectance"
-        elif max_val > 1.0:
+        if "uint8" in original_dtype:
             method = "uint8"
         else:
-            method = "passthrough"
+            max_val = float(np.max(arr))
+            if max_val > 255.0:
+                method = "reflectance"
+            elif max_val > 1.0:
+                method = "uint8"
+            else:
+                method = "passthrough"
         stats["detected_method"] = method
 
     if method == "reflectance":
-        # Physical Sentinel-2 L2A BOA reflectance quantification factor: 10000
-        # Clip to [0.0, 1.0] to maintain physically valid reflectance range
-        norm_arr = np.clip(arr / 10000.0, 0.0, 1.0)
+        offset = 0.0
+        if baseline_offset is not None:
+            offset = baseline_offset
+        elif tags is not None and "BOA_ADD_OFFSET" in tags:
+            offset = float(tags["BOA_ADD_OFFSET"])
+        elif "uint16" in original_dtype:
+            offset = 1000.0
+            warn_msg = "No BOA_ADD_OFFSET tag found in uint16 GeoTIFF. Assuming newer baseline (>= 04.00) with offset=1000."
+            import warnings
+            warnings.warn(warn_msg)
+            stats["warning"] = warn_msg
+
+        # Treat DN == 0 as NoData (or 0 reflectance)
+        mask = arr > 0
+        norm_arr = np.zeros_like(arr)
+        norm_arr[mask] = np.clip((arr[mask] - offset) / 10000.0, 0.0, 1.0)
+        
+        stats["offset"] = offset
         stats["scale_factor"] = 10000.0
     elif method == "uint8":
         # Standard 8-bit image [0, 255]

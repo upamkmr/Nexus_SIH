@@ -13,26 +13,25 @@ import {
 import api from '../services/api';
 
 export default function DashboardPage() {
-  const [stats, setStats] = useState({
-    totalImagesProcessed: 148,
-    activeJobs: 1,
-    avgPsnr: 32.1,
-    avgSsim: 0.884,
-    storageUsedGb: 14.6
-  });
+  const [stats, setStats] = useState(null);
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [statsError, setStatsError] = useState(null);
 
   useEffect(() => {
     api.get('/dashboard/stats')
-      .then((data) => setStats(data))
-      .catch((err) => console.log('Using default dashboard metrics', err));
+      .then((data) => { setStats(data); setStatsLoading(false); })
+      .catch((err) => { setStatsError(err.message); setStatsLoading(false); });
   }, []);
 
+  const fmt = (v, suffix = '') => (v == null ? '—' : `${v}${suffix}`);
+
   const statCards = [
-    { title: 'Scenes Enhanced', value: stats.totalImagesProcessed, icon: Layers, color: 'var(--accent-cyan)', change: '+12% this week' },
-    { title: 'Mean PSNR Gain', value: `${stats.avgPsnr} dB`, icon: TrendingUp, color: 'var(--accent-emerald)', change: 'Benchmark: >30 dB' },
-    { title: 'Structural Similarity', value: stats.avgSsim, icon: Sparkles, color: 'var(--accent-purple)', change: 'Target: >0.85 SSIM' },
-    { title: 'Spatial Target GSD', value: '2.5m', icon: Cpu, color: 'var(--accent-amber)', change: 'Down from 10m S2' }
+    { title: 'Scenes Enhanced',      value: fmt(stats?.totalImagesProcessed), icon: Layers,    color: 'var(--accent-cyan)',    change: 'Real processed count' },
+    { title: 'Mean PSNR Gain',       value: fmt(stats?.avgPsnr, ' dB'),       icon: TrendingUp, color: 'var(--accent-emerald)', change: 'Benchmark: >30 dB' },
+    { title: 'Structural Similarity', value: fmt(stats?.avgSsim),             icon: Sparkles,  color: 'var(--accent-purple)', change: 'Target: >0.85 SSIM' },
+    { title: 'Spatial Target GSD',   value: '2.5m',                           icon: Cpu,       color: 'var(--accent-amber)',  change: 'Down from 10m S2' }
   ];
+
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
@@ -78,10 +77,17 @@ export default function DashboardPage() {
       </div>
 
       {/* Metric Cards Grid */}
+      {statsError && (
+        <div style={{ padding: '0.75rem 1rem', backgroundColor: 'rgba(185,28,28,0.1)', border: '1px solid rgba(185,28,28,0.3)', borderRadius: 'var(--radius-md)', color: '#fca5a5', fontSize: '0.85rem' }}>
+          Could not load live stats: {statsError}
+        </div>
+      )}
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-        gap: '1.25rem'
+        gap: '1.25rem',
+        opacity: statsLoading ? 0.45 : 1,
+        transition: 'opacity 0.3s'
       }}>
         {statCards.map((card, i) => {
           const Icon = card.icon;
@@ -101,7 +107,7 @@ export default function DashboardPage() {
                 </div>
               </div>
               <div style={{ fontSize: '1.85rem', fontWeight: 700, color: '#ffffff', marginBottom: '0.35rem' }}>
-                {card.value}
+                {statsLoading ? '…' : card.value}
               </div>
               <div style={{ fontSize: '0.78rem', color: card.color, fontWeight: 500 }}>
                 {card.change}
@@ -110,6 +116,7 @@ export default function DashboardPage() {
           );
         })}
       </div>
+
 
       {/* Model Architectures Showcase */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>

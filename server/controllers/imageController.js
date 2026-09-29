@@ -21,8 +21,14 @@ class ImageController {
       } else if (req.body.sample_file) {
         // User selected an existing Copernicus Sentinel-2 sample raster
         const cleanSample = path.basename(req.body.sample_file);
-        targetFilePath = path.join(UPLOAD_PATH, cleanSample);
+        targetFilePath = path.resolve(UPLOAD_PATH, cleanSample);
         filename = cleanSample;
+
+        // Ensure resolved path is strictly inside UPLOAD_PATH (prevent traversal)
+        if (!targetFilePath.startsWith(path.resolve(UPLOAD_PATH) + path.sep) &&
+            targetFilePath !== path.resolve(UPLOAD_PATH)) {
+          return res.status(400).json({ error: 'Invalid sample path.' });
+        }
 
         if (!fs.existsSync(targetFilePath)) {
           return res.status(404).json({ error: `Sample file "${cleanSample}" not found in data repository.` });
@@ -47,18 +53,28 @@ class ImageController {
       const referencePath = req.body.reference_path || null;
       const bands = req.body.bands ? (Array.isArray(req.body.bands) ? req.body.bands : [req.body.bands]) : ['B04', 'B03', 'B02'];
 
-      const jobId = 'job_' + Date.now();
+      let jobId = req.body.jobId || req.body._jobId;
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      
+      if (jobId && !uuidRegex.test(jobId)) {
+        return res.status(400).json({ error: "Invalid jobId format. Must be a valid UUID." });
+      } else if (!jobId) {
+        jobId = require('crypto').randomUUID();
+      }
+      
+      const baselineOffset = req.body.baseline_offset ? parseFloat(req.body.baseline_offset) : null;
+      const roomName = `job_${jobId}`;
 
-      // Emit starting progress over WebSocket
+      // Emit starting progress over WebSocket to the specific job room
       if (io) {
-        io.emit('job_started', {
+        io.to(roomName).emit('job_started', {
           jobId,
           filename,
           modelType,
           scaleFactor,
           timestamp: new Date().toISOString()
         });
-        io.emit('job_progress', {
+        io.to(roomName).emit('job_progress', {
           jobId,
           progress: 25,
           message: `Parsing raster bands and tiling with ${scaleFactor}x super-resolution grid...`
@@ -67,7 +83,6 @@ class ImageController {
 
       console.log(`[ImageController] Running super-resolution on: ${targetFilePath} using ${modelType}`);
 
-      // Run ML Pipeline via microservice
       const mlResult = await mlBridge.runSuperResolution({
         imagePath: targetFilePath,
         modelType,
@@ -75,14 +90,29 @@ class ImageController {
         estimateUncertainty,
         bands,
         referencePath,
-        runWaldValidation
+        runWaldValidation,
+        baselineOffset
       });
+
+      // Rewrite ML-service-relative URLs to Express /static/outputs so the
+      // browser only talks to Express (port 5000 → Vite proxy → Express).
+      const rewriteUrl = (u) => {
+        if (!u) return null;
+        const base = u.startsWith('/static/outputs/')
+          ? u.replace('/static/outputs/', '')
+          : require('path').basename(u);
+        return `/static/outputs/${base}`;
+      };
 
       const responsePayload = {
         jobId,
         filename,
         originalImage: `/static/uploads/${filename}`,
         ...mlResult,
+        preview_url:         rewriteUrl(mlResult.preview_url),
+        geotiff_url:         rewriteUrl(mlResult.geotiff_url),
+        input_preview_url:   rewriteUrl(mlResult.input_preview_url),
+        uncertainty_map_url: rewriteUrl(mlResult.uncertainty_map_url),
         timestamp: new Date().toISOString()
       };
 
@@ -90,9 +120,9 @@ class ImageController {
       recentJobs.unshift(responsePayload);
       if (recentJobs.length > 50) recentJobs.pop();
 
-      // Emit completion via WebSocket
+      // Emit completion only to the job room
       if (io) {
-        io.emit('job_complete', {
+        io.to(roomName).emit('job_complete', {
           jobId,
           status: 'success',
           result: responsePayload
@@ -108,8 +138,11 @@ class ImageController {
     } catch (error) {
       console.error('[ImageController Error]', error.message);
       const io = req.app.get('io');
+      // jobId may already exist if the error occurred after job creation
+      const errJobId = req.body?._jobId;
       if (io) {
-        io.emit('job_error', {
+        const target = errJobId ? io.to(`job_${errJobId}`) : io;
+        target.emit('job_error', {
           error: error.message || 'Super-resolution pipeline failed'
         });
       }
@@ -139,14 +172,17 @@ class ImageController {
 
         if (files.length > 0) {
           const latestFile = files[0];
-          const latestTif = latestFile.replace('.png', '.tif');
-          // Find matching uncertainty if available
-          const uFiles = fs.readdirSync(OUTPUT_PATH).filter(f => f.startsWith('uncertainty_heatmap_'));
-          const latestU = uFiles.length > 0 ? uFiles[0] : null;
 
-          // Find matching input preview if available
-          const inFiles = fs.readdirSync(OUTPUT_PATH).filter(f => f.startsWith('input_raw_'));
-          const latestIn = inFiles.length > 0 ? inFiles[0] : null;
+          // Extract timestamp from filename: enhanced_sr_{model}_{ts}.png
+          const tsMatch = latestFile.match(/_([0-9]+)\.png$/);
+          const ts = tsMatch ? tsMatch[1] : null;
+
+          const exists = (f) => fs.existsSync(path.join(OUTPUT_PATH, f));
+
+          // Match companion files by same timestamp; fall back to most-recent sort
+          const latestTifName = latestFile.replace('.png', '.tif');
+          const uName  = ts && exists(`uncertainty_heatmap_${ts}.png`) ? `uncertainty_heatmap_${ts}.png` : null;
+          const inName = ts && exists(`input_raw_${ts}.png`)           ? `input_raw_${ts}.png`           : null;
 
           const fallbackResult = {
             jobId: 'disk_latest',
@@ -154,17 +190,14 @@ class ImageController {
             original_resolution: '10.0m',
             target_resolution: '2.5m',
             scale_factor: 4,
-            preview_url: `/static/outputs/${latestFile}`,
-            geotiff_url: `/static/outputs/${latestTif}`,
-            input_preview_url: latestIn ? `/static/outputs/${latestIn}` : '/sample_input_10m.png',
-            uncertainty_map_url: latestU ? `/static/outputs/${latestU}` : null,
+            preview_url:         `/static/outputs/${latestFile}`,
+            geotiff_url:         exists(latestTifName) ? `/static/outputs/${latestTifName}` : null,
+            input_preview_url:   inName ? `/static/outputs/${inName}` : null,
+            uncertainty_map_url: uName  ? `/static/outputs/${uName}`  : null,
             metrics: {
               has_reference: false,
-              reference_status: "No paired high-resolution reference raster provided. Reference-based metrics (PSNR, SSIM, SAM, ERGAS) require paired ground truth.",
-              psnr: null,
-              ssim: null,
-              sam_deg: null,
-              ergas: null
+              reference_status: 'No paired high-resolution reference raster provided.',
+              psnr: null, ssim: null, sam_deg: null, ergas: null
             },
             metadata: {
               source: 'Copernicus Data Space Ecosystem (CDSE) Sentinel-2',

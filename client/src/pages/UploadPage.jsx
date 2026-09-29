@@ -14,6 +14,17 @@ import {
   Cpu
 } from 'lucide-react';
 import imageService from '../services/imageService';
+import { io as socketIO } from 'socket.io-client';
+
+// Single shared socket instance (lazy singleton)
+let _socket = null;
+const getSocket = () => {
+  if (!_socket) {
+    _socket = socketIO('http://localhost:5000', { transports: ['websocket'] });
+  }
+  return _socket;
+};
+
 
 export default function UploadPage() {
   const navigate = useNavigate();
@@ -25,11 +36,15 @@ export default function UploadPage() {
   const [estimateUncertainty, setEstimateUncertainty] = useState(true);
   const [runWaldValidation, setRunWaldValidation] = useState(false);
   const [selectedBands, setSelectedBands] = useState('rgb_nir');
+  const [baselineOffset, setBaselineOffset] = useState('');
   const [processing, setProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [samples, setSamples] = useState([]);
+
+  // True only when the user has actively provided input
+  const isValid = !!file || useSample;
 
   useEffect(() => {
     // Load available Copernicus samples from backend
@@ -67,8 +82,8 @@ export default function UploadPage() {
 
   const handleProcess = async (e) => {
     e.preventDefault();
-    if (!file && !useSample && !selectedSample) {
-      setErrorMessage('Please upload a Sentinel-2 GeoTIFF or select one of the Copernicus test samples below.');
+    if (!isValid) {
+      setErrorMessage('Please upload a Sentinel-2 GeoTIFF or click one of the Copernicus samples below.');
       return;
     }
 
@@ -93,6 +108,9 @@ export default function UploadPage() {
       setStatusMessage('Blending overlapping tiles & generating 2.5m GeoTIFF output with georeferencing...');
     }, 3200);
 
+    const jobId = crypto.randomUUID();
+    getSocket().emit('join_job', jobId);
+
     try {
       let response;
       if (file) {
@@ -102,8 +120,10 @@ export default function UploadPage() {
         formData.append('scale_factor', scaleFactor);
         formData.append('estimate_uncertainty', estimateUncertainty);
         formData.append('run_wald_validation', runWaldValidation);
-        formData.append('bands', selectedBands === 'rgb_nir' ? ['B04', 'B03', 'B02', 'B08'] : ['B04', 'B03', 'B02']);
-
+        const bandsToSend = selectedBands === 'rgb_nir' ? ['B04', 'B03', 'B02', 'B08'] : ['B04', 'B03', 'B02'];
+        bandsToSend.forEach(b => formData.append('bands', b));
+        formData.append('jobId', jobId);
+        if (baselineOffset !== '') formData.append('baseline_offset', baselineOffset);
         response = await imageService.uploadAndProcess(formData);
       } else {
         response = await imageService.processSample({
@@ -112,7 +132,9 @@ export default function UploadPage() {
           scale_factor: scaleFactor,
           estimate_uncertainty: estimateUncertainty,
           run_wald_validation: runWaldValidation,
-          bands: selectedBands === 'rgb_nir' ? ['B04', 'B03', 'B02', 'B08'] : ['B04', 'B03', 'B02']
+          bands: selectedBands === 'rgb_nir' ? ['B04', 'B03', 'B02', 'B08'] : ['B04', 'B03', 'B02'],
+          jobId: jobId,
+          ...(baselineOffset !== '' ? { baseline_offset: baselineOffset } : {})
         });
       }
 
@@ -353,6 +375,33 @@ export default function UploadPage() {
               <option value="rgb">3 Bands: True Color RGB (B04, B03, B02)</option>
             </select>
           </div>
+          
+          {/* Baseline Offset */}
+          <div className="glass-panel" style={{ padding: '1.5rem', background: '#ffffff', border: '1px solid rgba(148,163,184,0.15)' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, marginBottom: '0.75rem', fontSize: '0.95rem', color: '#0f172a' }}>
+              <Sliders size={16} color="#475569" />
+              BOA Baseline Offset (Untagged uint16)
+            </label>
+            <select
+              value={baselineOffset}
+              onChange={(e) => setBaselineOffset(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '0.75rem 1rem',
+                borderRadius: 'var(--radius-md)',
+                backgroundColor: '#f8fafc',
+                border: '1px solid rgba(148, 163, 184, 0.25)',
+                color: '#0f172a',
+                fontFamily: 'var(--font-body)',
+                fontSize: '0.9rem',
+                outline: 'none'
+              }}
+            >
+              <option value="">Auto (Extract from Tag or Default 1000)</option>
+              <option value="0">0 (Old Baseline &lt; 04.00)</option>
+              <option value="1000">1000 (Baseline &gt;= 04.00)</option>
+            </select>
+          </div>
         </div>
 
         {/* Uncertainty Checkbox */}
@@ -410,7 +459,7 @@ export default function UploadPage() {
             type="submit"
             className="btn btn-primary"
             id="btn-start-super-resolution"
-            disabled={processing}
+            disabled={processing || !isValid}
             style={{
               padding: '1rem 2.4rem',
               fontSize: '1.05rem',
@@ -418,14 +467,16 @@ export default function UploadPage() {
               alignItems: 'center',
               justifyContent: 'center',
               gap: '0.75rem',
-              background: '#172033',
+              background: (!isValid || processing) ? '#475569' : '#172033',
               color: '#f8fafc',
               boxShadow: '0 10px 20px rgba(15, 23, 42, 0.12)',
               border: '1px solid rgba(15, 23, 42, 0.18)',
               minWidth: '320px',
               borderRadius: '12px',
               fontWeight: 700,
-              letterSpacing: '0.01em'
+              letterSpacing: '0.01em',
+              cursor: (!isValid || processing) ? 'not-allowed' : 'pointer',
+              opacity: (!isValid || processing) ? 0.6 : 1
             }}
           >
             <Sparkles size={20} />
@@ -433,7 +484,7 @@ export default function UploadPage() {
           </button>
         </div>
 
-        {!file && !useSample && (
+        {!isValid && (
           <div style={{ display: 'flex', justifyContent: 'center', width: '100%' }}>
             <span style={{ fontSize: '0.85rem', color: '#64748b' }}>
               (Click a Copernicus sample or upload a file to begin)
