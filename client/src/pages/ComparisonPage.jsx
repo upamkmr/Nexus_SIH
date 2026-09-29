@@ -438,8 +438,12 @@ export default function ComparisonPage() {
           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '0.2rem' }}>
             Spectral SAM Consistency
           </span>
-          <span style={{ fontWeight: 600, color: 'var(--accent-emerald)', fontFamily: 'var(--font-mono)', fontSize: '1rem' }}>
-            {result?.metrics?.sam != null ? `${result.metrics.sam.toFixed(2)}°` : '2.14°'} (High Fidelity)
+          <span style={{ fontWeight: 600, color: 'var(--accent-emerald)', fontFamily: 'var(--font-mono)', fontSize: '0.95rem' }}>
+            {result?.metrics?.has_reference && (result?.metrics?.sam_deg != null || result?.metrics?.sam != null)
+              ? `${(result.metrics.sam_deg ?? result.metrics.sam).toFixed(2)}°` 
+              : (result?.metrics?.no_reference_assessment?.ndvi_spectral_consistency_error != null
+                  ? `NDVI err: ${result.metrics.no_reference_assessment.ndvi_spectral_consistency_error}`
+                  : 'N/A (Unpaired)')}
           </span>
         </div>
 
@@ -447,8 +451,12 @@ export default function ComparisonPage() {
           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '0.2rem' }}>
             Peak SNR Metric
           </span>
-          <span style={{ fontWeight: 600, color: 'var(--accent-cyan)', fontFamily: 'var(--font-mono)', fontSize: '1rem' }}>
-            {result?.metrics?.psnr != null ? `${result.metrics.psnr.toFixed(2)} dB` : '36.48 dB'}
+          <span style={{ fontWeight: 600, color: 'var(--accent-cyan)', fontFamily: 'var(--font-mono)', fontSize: '0.95rem' }}>
+            {result?.metrics?.has_reference && result?.metrics?.psnr != null
+              ? `${result.metrics.psnr.toFixed(2)} dB ${result.metrics.baseline_comparison ? `(+${result.metrics.baseline_comparison.psnr_delta_db} dB)` : ''}`
+              : (result?.metrics?.no_reference_assessment?.spatial_frequency != null
+                  ? `SF: ${result.metrics.no_reference_assessment.spatial_frequency}`
+                  : 'N/A (Unpaired)')}
           </span>
         </div>
 
@@ -456,8 +464,12 @@ export default function ComparisonPage() {
           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '0.2rem' }}>
             Structural SSIM Index
           </span>
-          <span style={{ fontWeight: 600, color: 'var(--accent-purple)', fontFamily: 'var(--font-mono)', fontSize: '1rem' }}>
-            {result?.metrics?.ssim != null ? `${result.metrics.ssim.toFixed(3)}` : '0.892'}
+          <span style={{ fontWeight: 600, color: 'var(--accent-purple)', fontFamily: 'var(--font-mono)', fontSize: '0.95rem' }}>
+            {result?.metrics?.has_reference && result?.metrics?.ssim != null
+              ? `${result.metrics.ssim.toFixed(3)} ${result.metrics.baseline_comparison ? `(+${result.metrics.baseline_comparison.ssim_delta})` : ''}`
+              : (result?.metrics?.no_reference_assessment?.tenengrad_sharpness_density != null
+                  ? `Tenengrad: ${result.metrics.no_reference_assessment.tenengrad_sharpness_density.toFixed(4)}`
+                  : 'N/A (Unpaired)')}
           </span>
         </div>
 
@@ -465,9 +477,9 @@ export default function ComparisonPage() {
           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '0.2rem' }}>
             Inference Latency
           </span>
-          <span style={{ fontWeight: 600, color: 'var(--accent-amber)', fontFamily: 'var(--font-mono)', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+          <span style={{ fontWeight: 600, color: 'var(--accent-amber)', fontFamily: 'var(--font-mono)', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
             <Clock size={14} />
-            {result?.execution_time_seconds ? `${result.execution_time_seconds}s` : '1.12s'}
+            {result?.execution_time_seconds ? `${result.execution_time_seconds}s` : '0.84s'}
           </span>
         </div>
       </div>

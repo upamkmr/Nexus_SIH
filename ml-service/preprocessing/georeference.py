@@ -13,7 +13,7 @@ class GeoReferenceHandler:
         scale_factor: int = 4
     ) -> Tuple[float, float, float, float, float, float]:
         """
-        Updates GDAL/Rasterio GeoTransform tuple (c, a, b, f, d, e):
+        Updates GDAL GeoTransform tuple (c, a, b, f, d, e):
         a = pixel width (e.g. 10m) -> becomes 10.0 / scale_factor (e.g. 2.5m)
         e = pixel height (e.g. -10m) -> becomes -10.0 / scale_factor (e.g. -2.5m)
         c = top-left X coordinate (unchanged)
@@ -26,6 +26,31 @@ class GeoReferenceHandler:
         return (c, new_a, b, f, d, new_e)
 
     @staticmethod
+    def adjust_affine_transform(
+        affine_transform: Any,
+        scale_factor: int = 4
+    ) -> Any:
+        """
+        Adjusts a rasterio.transform.Affine object by scaling pixel dimensions.
+        Affine(a, b, c, d, e, f):
+        a = x resolution, e = y resolution (negative), c = x origin, f = y origin
+        """
+        try:
+            from rasterio.transform import Affine
+            if isinstance(affine_transform, Affine):
+                return Affine(
+                    affine_transform.a / float(scale_factor),
+                    affine_transform.b,
+                    affine_transform.c,
+                    affine_transform.d,
+                    affine_transform.e / float(scale_factor),
+                    affine_transform.f
+                )
+        except ImportError:
+            pass
+        return affine_transform
+
+    @staticmethod
     def get_default_sentinel_metadata(
         height: int,
         width: int,
@@ -34,14 +59,24 @@ class GeoReferenceHandler:
     ) -> Dict[str, Any]:
         """Generates standard UTM georeferencing metadata for simulated or processed rasters."""
         input_res = 10.0
-        output_res = input_res / scale_factor
+        output_res = input_res / float(scale_factor)
 
-        return {
+        gdal_gt = (700000.0, output_res, 0.0, 3100000.0, 0.0, -output_res)
+
+        meta = {
             "crs": crs,
             "input_resolution_m": input_res,
             "output_resolution_m": output_res,
             "scale_factor": scale_factor,
-            "geotransform": (700000.0, output_res, 0.0, 3100000.0, 0.0, -output_res),
+            "geotransform": gdal_gt,
             "driver": "GTiff",
             "nodata": 0
         }
+
+        try:
+            from rasterio.transform import Affine
+            meta["transform"] = Affine(output_res, 0.0, 700000.0, 0.0, -output_res, 3100000.0)
+        except ImportError:
+            pass
+
+        return meta

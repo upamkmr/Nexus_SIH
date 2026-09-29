@@ -142,19 +142,21 @@ export default function HistoryPage() {
               <div>
                 <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block' }}>Peak SNR</span>
                 <span style={{ fontWeight: 700, color: 'var(--accent-cyan)', fontFamily: 'var(--font-mono)' }}>
-                  {item.metrics?.psnr ? `${item.metrics.psnr} dB` : '36.48 dB'}
+                  {item.metrics?.psnr ? `${item.metrics.psnr} dB` : 'N/A (Unpaired)'}
                 </span>
               </div>
               <div>
                 <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block' }}>SSIM</span>
                 <span style={{ fontWeight: 700, color: 'var(--accent-purple)', fontFamily: 'var(--font-mono)' }}>
-                  {item.metrics?.ssim ? item.metrics.ssim : '0.892'}
+                  {item.metrics?.ssim ? item.metrics.ssim : 'N/A (Unpaired)'}
                 </span>
               </div>
               <div>
                 <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block' }}>SAM Angle</span>
                 <span style={{ fontWeight: 700, color: 'var(--accent-emerald)', fontFamily: 'var(--font-mono)' }}>
-                  {item.metrics?.sam != null ? `${item.metrics.sam}°` : '2.14°'}
+                  {item.metrics?.sam != null || item.metrics?.sam_deg != null 
+                    ? `${item.metrics.sam ?? item.metrics.sam_deg}°` 
+                    : 'N/A (Unpaired)'}
                 </span>
               </div>
             </div>

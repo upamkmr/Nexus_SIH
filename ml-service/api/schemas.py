@@ -4,24 +4,19 @@ from enum import Enum
 
 class ModelArchitecture(str, Enum):
     SRGAN = "srgan"
-    DIFFUSION = "diffusion"
     SWIN_IR = "swin_ir"
+    BICUBIC = "bicubic"
 
 class PredictRequest(BaseModel):
     image_path: str = Field(..., description="Absolute or relative path to the Sentinel-2 image")
+    reference_path: Optional[str] = Field(None, description="Optional path to paired High-Resolution reference raster (e.g. SPOT 1.5m / aerial / ground truth)")
+    run_wald_validation: bool = Field(default=False, description="Run Wald degradation protocol (benchmark 40m -> 10m against original Sentinel-2)")
     output_filename: Optional[str] = Field(None, description="Custom name for the super-resolved output")
     model_type: ModelArchitecture = Field(default=ModelArchitecture.SRGAN, description="Selected super-resolution model")
     scale_factor: int = Field(default=4, ge=2, le=8, description="Spatial scale factor (e.g. 4 for 10m -> 2.5m)")
     bands: List[str] = Field(default=["B04", "B03", "B02"], description="Bands to process (RGB or RGB+NIR)")
-    estimate_uncertainty: bool = Field(default=True, description="Whether to produce uncertainty variance map")
+    estimate_uncertainty: bool = Field(default=True, description="Whether to produce uncertainty variance map via TTA ensemble")
     preserve_georeference: bool = Field(default=True, description="Preserve CRS and Affine transform in output GeoTIFF")
-
-class MetricScore(BaseModel):
-    psnr: Optional[float] = Field(None, description="Peak Signal-to-Noise Ratio (dB)")
-    ssim: Optional[float] = Field(None, description="Structural Similarity Index")
-    sam: Optional[float] = Field(None, description="Spectral Angle Mapper (radians/degrees)")
-    ergas: Optional[float] = Field(None, description="Relative Dimensionless Global Error in Synthesis")
-    lpips: Optional[float] = Field(None, description="Learned Perceptual Image Patch Similarity")
 
 class UncertaintySummary(BaseModel):
     mean_uncertainty: float
@@ -40,7 +35,7 @@ class PredictResponse(BaseModel):
     geotiff_url: Optional[str] = None
     input_preview_url: Optional[str] = None
     uncertainty_map_url: Optional[str] = None
-    metrics: Optional[MetricScore] = None
+    metrics: Optional[Dict[str, Any]] = None
     uncertainty: Optional[UncertaintySummary] = None
     execution_time_seconds: float
     metadata: Dict[str, Any] = {}

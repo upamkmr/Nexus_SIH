@@ -5,7 +5,6 @@ from .schemas import (
     PredictRequest,
     PredictResponse,
     HealthResponse,
-    MetricScore,
     UncertaintySummary,
     ModelArchitecture,
 )
@@ -20,9 +19,9 @@ async def health_check():
     try:
         import torch
         has_cuda = torch.cuda.is_available()
-        device_name = torch.cuda.get_device_name(0) if has_cuda else "CPU"
+        device_name = torch.cuda.get_device_name(0) if has_cuda else "CPU (PyTorch 2.x)"
     except ImportError:
-        device_name = "CPU (Torch not imported)"
+        device_name = "CPU (PyTorch not available)"
 
     return HealthResponse(
         status="online",
@@ -39,30 +38,41 @@ async def list_models():
         "models": [
             {
                 "id": "srgan",
-                "name": "Sentinel-2 SRGAN",
-                "description": "Adversarial network optimized for high frequency edge reconstruction on Sentinel-2 bands.",
+                "name": "Sentinel-2 SRGAN (PyTorch)",
+                "description": "Deep residual convolutional network with pixel-shuffle upsampling trained on multi-spectral satellite imagery.",
                 "scale_factor": 4,
                 "input_resolution": "10m",
                 "output_resolution": "2.5m",
-                "speed": "Fast (~0.8s/tile)"
-            },
-            {
-                "id": "diffusion",
-                "name": "GeoDiffusion-SR",
-                "description": "Score-based diffusion pipeline with guided sampling for fine agricultural and urban textures.",
-                "scale_factor": 4,
-                "input_resolution": "10m",
-                "output_resolution": "2.5m",
-                "speed": "Moderate (~2.5s/tile)"
+                "speed": "Fast (~0.6s/tile)",
+                "status": "Operational (Checkpoint active)"
             },
             {
                 "id": "swin_ir",
-                "name": "SwinIR Remote Sensing Transformer",
-                "description": "Shifted window self-attention network preserving long-range spectral and spatial relationships.",
+                "name": "High-Frequency Spline Refiner (Classical Baseline)",
+                "description": "High-order spline interpolation with unsharp high-pass spatial detail synthesis. Pretrained SwinIR fine-tuning is on the roadmap.",
                 "scale_factor": 4,
                 "input_resolution": "10m",
                 "output_resolution": "2.5m",
-                "speed": "Balanced (~1.2s/tile)"
+                "speed": "Very Fast (~0.3s/tile)",
+                "status": "Operational (Analytical Baseline)"
+            },
+            {
+                "id": "bicubic",
+                "name": "Bicubic Interpolation Baseline (Reference Standard)",
+                "description": "Standard spatial interpolation baseline used to compute objective delta scores (+Δ dB PSNR, +Δ SSIM).",
+                "scale_factor": 4,
+                "input_resolution": "10m",
+                "output_resolution": "2.5m",
+                "speed": "Ultra Fast (<0.1s/tile)",
+                "status": "Operational (Benchmark Standard)"
+            }
+        ],
+        "roadmap_models": [
+            {
+                "id": "diffusion",
+                "name": "GeoDiffusion-SR",
+                "description": "Latent diffusion model for remote sensing, fine-tuned on paired WorldStrat/SEN2VENµS datasets.",
+                "status": "Research Roadmap"
             }
         ]
     }
@@ -74,14 +84,9 @@ async def predict_super_resolution(req: PredictRequest):
             image_path=req.image_path,
             model_name=req.model_type.value,
             scale_factor=req.scale_factor,
-            estimate_uncertainty=req.estimate_uncertainty
-        )
-
-        metrics = MetricScore(
-            psnr=res["metrics"].get("psnr"),
-            ssim=res["metrics"].get("ssim"),
-            sam=res["metrics"].get("sam_deg"),
-            ergas=res["metrics"].get("ergas")
+            estimate_uncertainty=req.estimate_uncertainty,
+            reference_path=req.reference_path,
+            run_wald_validation=req.run_wald_validation
         )
 
         uncertainty = None
@@ -104,7 +109,7 @@ async def predict_super_resolution(req: PredictRequest):
             geotiff_url=res.get("geotiff_url"),
             input_preview_url=res.get("input_preview_url"),
             uncertainty_map_url=res.get("uncertainty_map_url"),
-            metrics=metrics,
+            metrics=res.get("metrics"),
             uncertainty=uncertainty,
             execution_time_seconds=res["execution_time_seconds"],
             metadata=res["metadata"]

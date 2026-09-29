@@ -95,12 +95,126 @@ class RemoteSensingMetrics:
         target: np.ndarray,
         reference: np.ndarray,
         scale_factor: int = 4
-    ) -> Dict[str, float]:
-        """Runs full suite of remote sensing validation metrics."""
+    ) -> Dict[str, Any]:
+        """Runs full suite of remote sensing validation metrics against reference."""
+        # Align dimensions if slight mismatch
+        t = target
+        r = reference
+        if t.shape != r.shape:
+            min_c = min(t.shape[0], r.shape[0])
+            min_h = min(t.shape[1], r.shape[1])
+            min_w = min(t.shape[2], r.shape[2])
+            t = t[:min_c, :min_h, :min_w]
+            r = r[:min_c, :min_h, :min_w]
+
         return {
-            "psnr": round(cls.calculate_psnr(target, reference), 2),
-            "ssim": round(cls.calculate_ssim(target, reference), 4),
-            "sam_deg": round(cls.calculate_sam(target, reference), 2),
-            "ergas": round(cls.calculate_ergas(target, reference, scale_factor), 2),
-            "rmse": round(float(np.sqrt(np.mean((target - reference) ** 2))), 4)
+            "has_reference": True,
+            "psnr": round(cls.calculate_psnr(t, r), 2),
+            "ssim": round(cls.calculate_ssim(t, r), 4),
+            "sam_deg": round(cls.calculate_sam(t, r), 2),
+            "ergas": round(cls.calculate_ergas(t, r, scale_factor), 2),
+            "rmse": round(float(np.sqrt(np.mean((t - r) ** 2))), 4)
         }
+
+    @classmethod
+    def evaluate_with_baseline(
+        cls,
+        target: np.ndarray,
+        lr_input: np.ndarray,
+        reference: np.ndarray,
+        scale_factor: int = 4
+    ) -> Dict[str, Any]:
+        """
+        Evaluates model output against certified HR reference raster AND benchmarks
+        directly against a standard Bicubic baseline on the same input.
+        Reports exact metric deltas (+Δ dB PSNR, +Δ SSIM) that the model must beat.
+        """
+        model_scores = cls.evaluate_all(target, reference, scale_factor=scale_factor)
+
+        # Generate bicubic baseline
+        channels, lr_h, lr_w = lr_input.shape
+        target_h, target_w = reference.shape[1], reference.shape[2]
+        bicubic_upscaled = np.zeros((channels, target_h, target_w), dtype=np.float32)
+
+        from scipy.ndimage import map_coordinates
+        y_coords = np.linspace(0, lr_h - 1, target_h)
+        x_coords = np.linspace(0, lr_w - 1, target_w)
+        grid_y, grid_x = np.meshgrid(y_coords, x_coords, indexing='ij')
+
+        for c in range(channels):
+            bicubic_upscaled[c] = np.clip(
+                map_coordinates(lr_input[c], [grid_y, grid_x], order=3, mode='reflect'),
+                0.0, 1.0
+            )
+
+        baseline_scores = cls.evaluate_all(bicubic_upscaled, reference, scale_factor=scale_factor)
+
+        psnr_delta = round(model_scores["psnr"] - baseline_scores["psnr"], 2)
+        ssim_delta = round(model_scores["ssim"] - baseline_scores["ssim"], 4)
+        sam_delta = round(baseline_scores["sam_deg"] - model_scores["sam_deg"], 2) # positive = model has smaller spectral distortion
+
+        return {
+            "has_reference": True,
+            "reference_type": "Paired High-Resolution Ground Truth",
+            "model_metrics": model_scores,
+            "bicubic_baseline": baseline_scores,
+            "psnr": model_scores["psnr"],
+            "ssim": model_scores["ssim"],
+            "sam_deg": model_scores["sam_deg"],
+            "ergas": model_scores["ergas"],
+            "baseline_comparison": {
+                "psnr_delta_db": psnr_delta,
+                "ssim_delta": ssim_delta,
+                "sam_delta_deg": sam_delta,
+                "beats_baseline": bool(psnr_delta >= 0.0 and ssim_delta >= 0.0)
+            }
+        }
+
+    @staticmethod
+    def evaluate_no_reference(target: np.ndarray, lr_input: Optional[np.ndarray] = None) -> Dict[str, Any]:
+        """
+        Provides objective no-reference spatial sharpness and spectral preservation metrics
+        when no paired high-resolution ground truth image is provided.
+        Never fabricates reference-based numbers like PSNR or SSIM.
+        """
+        # Tenengrad Gradient Density (High-frequency sharpness indicator)
+        gray = np.mean(target, axis=0) if target.ndim == 3 else target
+        gy, gx = np.gradient(gray)
+        tenengrad = float(np.mean(gx**2 + gy**2))
+
+        # Spatial Frequency (SF)
+        row_freq = np.sqrt(np.mean(np.diff(gray, axis=0) ** 2))
+        col_freq = np.sqrt(np.mean(np.diff(gray, axis=1) ** 2))
+        spatial_freq = float(np.sqrt(row_freq**2 + col_freq**2))
+
+        result = {
+            "has_reference": False,
+            "reference_status": "No high-resolution reference raster provided. Reference-based metrics (PSNR, SSIM, SAM, ERGAS) require paired ground truth.",
+            "psnr": None,
+            "ssim": None,
+            "sam_deg": None,
+            "ergas": None,
+            "no_reference_assessment": {
+                "tenengrad_sharpness_density": round(tenengrad, 6),
+                "spatial_frequency": round(spatial_freq, 4),
+                "dynamic_range": f"{float(target.min()):.3f} - {float(target.max()):.3f}"
+            }
+        }
+
+        # Spectral NDVI preservation check if NIR and Red bands exist (Bands 4 and 8 in Sentinel-2)
+        if target.ndim == 3 and target.shape[0] >= 4 and lr_input is not None and lr_input.shape[0] >= 4:
+            # Sentinel-2: Band 2=Blue, 3=Green, 4=Red, 8=NIR
+            nir_sr, red_sr = target[3], target[2]
+            ndvi_sr = (nir_sr - red_sr) / (nir_sr + red_sr + 1e-6)
+
+            nir_lr, red_lr = lr_input[3], lr_input[2]
+            ndvi_lr = (nir_lr - red_lr) / (nir_lr + red_lr + 1e-6)
+
+            from scipy.ndimage import zoom
+            z_factors = (ndvi_sr.shape[0] / ndvi_lr.shape[0], ndvi_sr.shape[1] / ndvi_lr.shape[1])
+            ndvi_lr_upscaled = zoom(ndvi_lr, z_factors, order=1)
+
+            ndvi_mae = float(np.mean(np.abs(ndvi_sr - ndvi_lr_upscaled)))
+            result["no_reference_assessment"]["ndvi_spectral_consistency_error"] = round(ndvi_mae, 4)
+
+        return result

@@ -8,31 +8,54 @@ from typing import Tuple, Optional
 
 def normalize_sentinel2(
     arr: np.ndarray,
-    method: str = "percentile",
+    method: str = "auto",
     percentiles: Tuple[float, float] = (2.0, 98.0)
 ) -> Tuple[np.ndarray, dict]:
     """
-    Normalizes Sentinel-2 multi-spectral data (typically 12-bit DN scaled to 0-10000 BOA reflectance)
-    into standard [0.0, 1.0] float32 arrays.
+    Normalizes Sentinel-2 multi-spectral data into standard [0.0, 1.0] float32 arrays
+    while preserving radiometric and physical surface reflectance integrity.
+    
+    Sentinel-2 L2A Bottom-of-Atmosphere (BOA) products use a quantification value of 10000
+    (DN = Reflectance * 10000). A value of 10000 corresponds to 100% surface reflectance (1.0).
     
     Args:
-        arr: Input array of shape (C, H, W) or (H, W, C)
-        method: "percentile" (robust remote sensing contrast) or "reflectance" (divide by 10000)
-        percentiles: Low and high percentiles for contrast clipping
+        arr: Input array of shape (C, H, W) or (H, W) or (H, W, C)
+        method: "auto", "reflectance" (divide by 10000 DN / 255 uint8), or "percentile" (display only)
+        percentiles: Low and high percentiles (only used if method="percentile")
     
     Returns:
-        normalized_array (float32 in [0, 1]), stats_dict for inversion
+        normalized_array (float32 in [0, 1]), stats_dict for exact radiometric inversion
     """
     arr = arr.astype(np.float32)
-    stats = {"method": method}
+    stats = {"method": method, "original_dtype": str(arr.dtype)}
+
+    if method == "auto":
+        # Detect radiometric scale:
+        # Sentinel-2 L2A 12-bit DNs typically exceed 255 and max out around 10000
+        max_val = float(np.max(arr))
+        if max_val > 255.0:
+            method = "reflectance"
+        elif max_val > 1.0:
+            method = "uint8"
+        else:
+            method = "passthrough"
+        stats["detected_method"] = method
 
     if method == "reflectance":
-        # ESA Sentinel-2 L2A BOA reflectance quantification value: 10000
+        # Physical Sentinel-2 L2A BOA reflectance quantification factor: 10000
+        # Clip to [0.0, 1.0] to maintain physically valid reflectance range
         norm_arr = np.clip(arr / 10000.0, 0.0, 1.0)
+        stats["scale_factor"] = 10000.0
+    elif method == "uint8":
+        # Standard 8-bit image [0, 255]
+        norm_arr = np.clip(arr / 255.0, 0.0, 1.0)
+        stats["scale_factor"] = 255.0
+    elif method == "passthrough":
+        norm_arr = np.clip(arr, 0.0, 1.0)
+        stats["scale_factor"] = 1.0
     elif method == "percentile":
-        # Per-band percentile stretch to handle extreme solar glint or deep shadow
+        # Preserved ONLY for non-calibrated visual contrast preview enhancement
         if arr.ndim == 3 and arr.shape[0] in [1, 3, 4, 8, 12]:
-            # Shape is (C, H, W)
             norm_bands = []
             mins, maxs = [], []
             for b in range(arr.shape[0]):
@@ -54,12 +77,11 @@ def normalize_sentinel2(
             stats["min"] = float(p_low)
             stats["max"] = float(p_high)
     else:
-        # Standard min-max
-        p_min = arr.min()
-        p_max = max(arr.max(), p_min + 1e-5)
+        p_min = float(arr.min())
+        p_max = float(max(arr.max(), p_min + 1e-5))
         norm_arr = (arr - p_min) / (p_max - p_min)
-        stats["min"] = float(p_min)
-        stats["max"] = float(p_max)
+        stats["min"] = p_min
+        stats["max"] = p_max
 
     return norm_arr.astype(np.float32), stats
 

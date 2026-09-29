@@ -40,9 +40,11 @@ class ImageController {
         }
       }
 
-      const modelType = req.body.model_type || req.body.modelType || 'swin_ir';
+      const modelType = req.body.model_type || req.body.modelType || 'srgan';
       const scaleFactor = parseInt(req.body.scale_factor || req.body.scaleFactor || '4', 10);
       const estimateUncertainty = req.body.estimate_uncertainty !== 'false' && req.body.estimate_uncertainty !== false;
+      const runWaldValidation = req.body.run_wald_validation === 'true' || req.body.run_wald_validation === true;
+      const referencePath = req.body.reference_path || null;
       const bands = req.body.bands ? (Array.isArray(req.body.bands) ? req.body.bands : [req.body.bands]) : ['B04', 'B03', 'B02'];
 
       const jobId = 'job_' + Date.now();
@@ -71,7 +73,9 @@ class ImageController {
         modelType,
         scaleFactor,
         estimateUncertainty,
-        bands
+        bands,
+        referencePath,
+        runWaldValidation
       });
 
       const responsePayload = {
@@ -135,6 +139,7 @@ class ImageController {
 
         if (files.length > 0) {
           const latestFile = files[0];
+          const latestTif = latestFile.replace('.png', '.tif');
           // Find matching uncertainty if available
           const uFiles = fs.readdirSync(OUTPUT_PATH).filter(f => f.startsWith('uncertainty_heatmap_'));
           const latestU = uFiles.length > 0 ? uFiles[0] : null;
@@ -145,18 +150,21 @@ class ImageController {
 
           const fallbackResult = {
             jobId: 'disk_latest',
-            model_used: 'swin_ir',
+            model_used: 'Sentinel-2 SRGAN (PyTorch)',
             original_resolution: '10.0m',
             target_resolution: '2.5m',
             scale_factor: 4,
             preview_url: `/static/outputs/${latestFile}`,
+            geotiff_url: `/static/outputs/${latestTif}`,
             input_preview_url: latestIn ? `/static/outputs/${latestIn}` : '/sample_input_10m.png',
             uncertainty_map_url: latestU ? `/static/outputs/${latestU}` : null,
             metrics: {
-              psnr: 36.48,
-              ssim: 0.892,
-              sam: 2.14,
-              ergas: 3.42
+              has_reference: false,
+              reference_status: "No paired high-resolution reference raster provided. Reference-based metrics (PSNR, SSIM, SAM, ERGAS) require paired ground truth.",
+              psnr: null,
+              ssim: null,
+              sam_deg: null,
+              ergas: null
             },
             metadata: {
               source: 'Copernicus Data Space Ecosystem (CDSE) Sentinel-2',
@@ -186,15 +194,15 @@ class ImageController {
             let label = file;
             let description = 'Sentinel-2 Level-2A Raster';
 
-            if (file === 'TCI.tif') {
+            if (file === 'Sentinel2_Airport_Runways_10m.tif') {
+              label = 'Airport Runways & Taxiways (Infrastructure)';
+              description = 'Ideal test: Sharp linear asphalt edges, runway markings & high-contrast terminal aprons (4 bands, 10m GSD)';
+            } else if (file === 'Sentinel2_Agricultural_Canals_10m.tif') {
+              label = 'Agricultural Parcels & Irrigation Canal';
+              description = 'Ideal test: Rectilinear crop boundaries, multi-spectral NDVI contrasts & water boundary (4 bands, 10m GSD)';
+            } else if (file === 'TCI.tif') {
               label = 'Sentinel-2 True Color Image (TCI)';
               description = 'Natural Color RGB 10m Granule from Copernicus Data Space Browser';
-            } else if (file === 'B02.tif') {
-              label = 'Sentinel-2 Band 02 (Blue - 490nm)';
-              description = '10m Surface Reflectance Blue Band';
-            } else if (file === 'B03.tif') {
-              label = 'Sentinel-2 Band 03 (Green - 560nm)';
-              description = '10m Surface Reflectance Green Band';
             } else if (file === 'B04.tif') {
               label = 'Sentinel-2 Band 04 (Red - 665nm)';
               description = '10m Surface Reflectance Red Band';

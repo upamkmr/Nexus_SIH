@@ -20,9 +20,10 @@ export default function UploadPage() {
   const [file, setFile] = useState(null);
   const [selectedSample, setSelectedSample] = useState('TCI.tif');
   const [useSample, setUseSample] = useState(false);
-  const [modelType, setModelType] = useState('swin_ir');
+  const [modelType, setModelType] = useState('srgan');
   const [scaleFactor, setScaleFactor] = useState(4);
   const [estimateUncertainty, setEstimateUncertainty] = useState(true);
+  const [runWaldValidation, setRunWaldValidation] = useState(false);
   const [selectedBands, setSelectedBands] = useState('rgb_nir');
   const [processing, setProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -100,6 +101,7 @@ export default function UploadPage() {
         formData.append('model_type', modelType);
         formData.append('scale_factor', scaleFactor);
         formData.append('estimate_uncertainty', estimateUncertainty);
+        formData.append('run_wald_validation', runWaldValidation);
         formData.append('bands', selectedBands === 'rgb_nir' ? ['B04', 'B03', 'B02', 'B08'] : ['B04', 'B03', 'B02']);
 
         response = await imageService.uploadAndProcess(formData);
@@ -109,6 +111,7 @@ export default function UploadPage() {
           model_type: modelType,
           scale_factor: scaleFactor,
           estimate_uncertainty: estimateUncertainty,
+          run_wald_validation: runWaldValidation,
           bands: selectedBands === 'rgb_nir' ? ['B04', 'B03', 'B02', 'B08'] : ['B04', 'B03', 'B02']
         });
       }
@@ -139,27 +142,27 @@ export default function UploadPage() {
   return (
     <div style={{ maxWidth: '980px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '2rem' }}>
       <div>
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', backgroundColor: 'rgba(6, 182, 212, 0.12)', border: '1px solid var(--border-glow)', padding: '0.35rem 0.85rem', borderRadius: '20px', color: 'var(--accent-cyan)', fontSize: '0.82rem', fontWeight: 600, marginBottom: '0.75rem' }}>
-          <Sparkles size={14} /> SIH 2024 Remote Sensing Pipeline • 10m to &lt;4m GSD
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', backgroundColor: 'rgba(71, 85, 105, 0.08)', border: '1px solid rgba(71, 85, 105, 0.15)', padding: '0.35rem 0.85rem', borderRadius: '20px', color: '#334155', fontSize: '0.82rem', fontWeight: 600, marginBottom: '0.75rem' }}>
+          SIH 2024 Remote Sensing Pipeline • 10m to &lt;4m GSD
         </div>
-        <h1 style={{ fontSize: '2.1rem', marginBottom: '0.5rem' }}>Enhance Sentinel-2 Imagery</h1>
-        <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        <h1 style={{ fontSize: '2.1rem', marginBottom: '0.5rem', color: '#0f172a' }}>Enhance Sentinel-2 Imagery</h1>
+        <p style={{ color: '#475569', lineHeight: 1.6 }}>
           Upload standard 10m Level-2A GeoTIFF rasters or choose an imported Copernicus Data Space scene to synthesize sub-4m high-fidelity spatial details with spectral consistency.
         </p>
       </div>
 
       {errorMessage && (
         <div style={{
-          backgroundColor: 'rgba(244, 63, 94, 0.15)',
-          border: '1px solid var(--accent-rose)',
+          backgroundColor: 'rgba(185, 28, 28, 0.08)',
+          border: '1px solid rgba(185, 28, 28, 0.25)',
           borderRadius: 'var(--radius-md)',
           padding: '1rem 1.25rem',
           display: 'flex',
           alignItems: 'center',
           gap: '0.75rem',
-          color: '#fda4af'
+          color: '#7f1d1d'
         }}>
-          <AlertCircle size={20} color="var(--accent-rose)" />
+          <AlertCircle size={20} color="#991b1b" />
           <span>{errorMessage}</span>
         </div>
       )}
@@ -169,13 +172,15 @@ export default function UploadPage() {
         <div 
           className="glass-panel"
           style={{
-            border: file ? '2px solid var(--accent-cyan)' : '2px dashed var(--border-glow)',
+            border: file ? '1px solid rgba(51, 65, 85, 0.5)' : '1px dashed rgba(51, 65, 85, 0.45)',
             padding: '2.5rem 2rem',
             textAlign: 'center',
             cursor: 'pointer',
             borderRadius: 'var(--radius-lg)',
-            backgroundColor: file ? 'rgba(6, 182, 212, 0.05)' : 'rgba(13, 19, 34, 0.5)',
-            transition: 'all 0.2s ease'
+            backgroundColor: file ? '#f8fafc' : '#f2f5f8',
+            transition: 'all 0.2s ease',
+            boxShadow: 'inset 0 0 0 1px rgba(148, 163, 184, 0.12)',
+            backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,0.6), rgba(241,245,249,0.9))'
           }}
           onClick={() => document.getElementById('file-upload-input').click()}
         >
@@ -190,30 +195,30 @@ export default function UploadPage() {
             width: '64px',
             height: '64px',
             borderRadius: '50%',
-            backgroundColor: file ? 'rgba(6, 182, 212, 0.2)' : 'rgba(6, 182, 212, 0.1)',
+            backgroundColor: file ? 'rgba(71, 85, 105, 0.08)' : 'rgba(148, 163, 184, 0.08)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             margin: '0 auto 1.25rem',
-            color: 'var(--accent-cyan)'
+            color: '#334155'
           }}>
             <UploadCloud size={32} />
           </div>
           {file ? (
             <div>
-              <div style={{ fontSize: '1.15rem', fontWeight: 600, color: '#ffffff', marginBottom: '0.25rem' }}>
+              <div style={{ fontSize: '1.15rem', fontWeight: 600, color: '#0f172a', marginBottom: '0.25rem' }}>
                 {file.name}
               </div>
-              <div style={{ fontSize: '0.85rem', color: 'var(--accent-cyan)' }}>
+              <div style={{ fontSize: '0.85rem', color: '#475569' }}>
                 {(file.size / (1024 * 1024)).toFixed(2)} MB • File selected & ready for model execution
               </div>
             </div>
           ) : (
             <div>
-              <div style={{ fontSize: '1.1rem', fontWeight: 600, color: '#ffffff', marginBottom: '0.5rem' }}>
+              <div style={{ fontSize: '1.1rem', fontWeight: 600, color: '#0f172a', marginBottom: '0.5rem' }}>
                 Drop Sentinel-2 GeoTIFF or image here, or click to browse
               </div>
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+              <div style={{ fontSize: '0.85rem', color: '#64748b' }}>
                 Supports .TIF (GeoTIFF), .JP2 (JPEG 2000), .PNG, .JPG (Max 150MB)
               </div>
             </div>
@@ -221,13 +226,13 @@ export default function UploadPage() {
         </div>
 
         {/* Quick-Select Copernicus Samples */}
-        <div className="glass-panel" style={{ padding: '1.25rem 1.5rem' }}>
+        <div className="glass-panel" style={{ padding: '1.25rem 1.5rem', background: '#ffffff', border: '1px solid rgba(148,163,184,0.15)' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-            <span style={{ fontSize: '0.95rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Database size={16} color="var(--accent-cyan)" />
+            <span style={{ fontSize: '0.95rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#0f172a' }}>
+              
               Or Test Instantly with Copernicus Data Space Ecosystem (CDSE) Scenes:
             </span>
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Real 10m Sentinel-2 Data</span>
+            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>Real 10m Sentinel-2 Data</span>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '0.85rem' }}>
@@ -240,22 +245,22 @@ export default function UploadPage() {
                   style={{
                     padding: '0.85rem 1rem',
                     borderRadius: 'var(--radius-md)',
-                    backgroundColor: isSelected ? 'rgba(6, 182, 212, 0.15)' : 'var(--bg-surface)',
-                    border: isSelected ? '1px solid var(--accent-cyan)' : '1px solid var(--border-subtle)',
+                    backgroundColor: isSelected ? 'rgba(71, 85, 105, 0.06)' : '#f8fafc',
+                    border: isSelected ? '1px solid rgba(71, 85, 105, 0.3)' : '1px solid rgba(148, 163, 184, 0.2)',
                     cursor: 'pointer',
                     transition: 'all 0.15s ease'
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                    <span style={{ fontWeight: 600, fontSize: '0.88rem', color: isSelected ? 'var(--accent-cyan)' : '#ffffff' }}>
+                    <span style={{ fontWeight: 600, fontSize: '0.88rem', color: isSelected ? '#0f172a' : '#0f172a' }}>
                       {s.filename}
                     </span>
-                    {isSelected && <CheckCircle2 size={16} color="var(--accent-cyan)" />}
+                    {isSelected && <CheckCircle2 size={16} color="#475569" />}
                   </div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#475569', marginBottom: '0.35rem' }}>
                     {s.label}
                   </div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                  <div style={{ fontSize: '0.7rem', color: '#64748b' }}>
                     {s.sizeMb} MB
                   </div>
                 </div>
@@ -271,9 +276,9 @@ export default function UploadPage() {
           gap: '1.25rem'
         }}>
           {/* Model Selector */}
-          <div className="glass-panel" style={{ padding: '1.5rem' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, marginBottom: '0.75rem', fontSize: '0.95rem' }}>
-              <Settings2 size={16} color="var(--accent-cyan)" />
+          <div className="glass-panel" style={{ padding: '1.5rem', background: '#ffffff', border: '1px solid rgba(148,163,184,0.15)' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, marginBottom: '0.75rem', fontSize: '0.95rem', color: '#0f172a' }}>
+              <Settings2 size={16} color="#475569" />
               Generative Model Architecture
             </label>
             <select
@@ -283,24 +288,24 @@ export default function UploadPage() {
                 width: '100%',
                 padding: '0.75rem 1rem',
                 borderRadius: 'var(--radius-md)',
-                backgroundColor: 'var(--bg-surface)',
-                border: '1px solid var(--border-subtle)',
-                color: '#ffffff',
+                backgroundColor: '#f8fafc',
+                border: '1px solid rgba(148, 163, 184, 0.25)',
+                color: '#0f172a',
                 fontFamily: 'var(--font-body)',
                 fontSize: '0.9rem',
                 outline: 'none'
               }}
             >
-              <option value="swin_ir">SwinIR Transformer (Best Spectral Fidelity & PSNR)</option>
-              <option value="srgan">Sentinel-2 SRGAN (Adversarial Edge Sharpening)</option>
-              <option value="diffusion">GeoDiffusion-SR (Ultra Fine Textures)</option>
+              <option value="srgan">Sentinel-2 SRGAN (PyTorch Deep ResNet - Default)</option>
+              <option value="swin_ir">High-Frequency Spline Refiner (Classical Baseline)</option>
+              <option value="bicubic">Bicubic Interpolation Baseline (Reference Standard)</option>
             </select>
           </div>
 
           {/* Scale Factor */}
-          <div className="glass-panel" style={{ padding: '1.5rem' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, marginBottom: '0.75rem', fontSize: '0.95rem' }}>
-              <Sliders size={16} color="var(--accent-emerald)" />
+          <div className="glass-panel" style={{ padding: '1.5rem', background: '#ffffff', border: '1px solid rgba(148,163,184,0.15)' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, marginBottom: '0.75rem', fontSize: '0.95rem', color: '#0f172a' }}>
+              <Sliders size={16} color="#475569" />
               Target Resolution Scale
             </label>
             <select
@@ -310,9 +315,9 @@ export default function UploadPage() {
                 width: '100%',
                 padding: '0.75rem 1rem',
                 borderRadius: 'var(--radius-md)',
-                backgroundColor: 'var(--bg-surface)',
-                border: '1px solid var(--border-subtle)',
-                color: '#ffffff',
+                backgroundColor: '#f8fafc',
+                border: '1px solid rgba(148, 163, 184, 0.25)',
+                color: '#0f172a',
                 fontFamily: 'var(--font-body)',
                 fontSize: '0.9rem',
                 outline: 'none'
@@ -324,9 +329,9 @@ export default function UploadPage() {
           </div>
 
           {/* Spectral Bands */}
-          <div className="glass-panel" style={{ padding: '1.5rem' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, marginBottom: '0.75rem', fontSize: '0.95rem' }}>
-              <Layers size={16} color="var(--accent-purple)" />
+          <div className="glass-panel" style={{ padding: '1.5rem', background: '#ffffff', border: '1px solid rgba(148,163,184,0.15)' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, marginBottom: '0.75rem', fontSize: '0.95rem', color: '#0f172a' }}>
+              <Layers size={16} color="#475569" />
               Band Combination
             </label>
             <select
@@ -336,9 +341,9 @@ export default function UploadPage() {
                 width: '100%',
                 padding: '0.75rem 1rem',
                 borderRadius: 'var(--radius-md)',
-                backgroundColor: 'var(--bg-surface)',
-                border: '1px solid var(--border-subtle)',
-                color: '#ffffff',
+                backgroundColor: '#f8fafc',
+                border: '1px solid rgba(148, 163, 184, 0.25)',
+                color: '#0f172a',
                 fontFamily: 'var(--font-body)',
                 fontSize: '0.9rem',
                 outline: 'none'
@@ -351,34 +356,48 @@ export default function UploadPage() {
         </div>
 
         {/* Uncertainty Checkbox */}
-        <div className="glass-panel" style={{ padding: '1.25rem 1.5rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+        <div className="glass-panel" style={{ padding: '1.25rem 1.5rem', display: 'flex', alignItems: 'center', gap: '1rem', background: '#ffffff', border: '1px solid rgba(148,163,184,0.15)' }}>
           <input
             type="checkbox"
             id="uncertainty-toggle"
             checked={estimateUncertainty}
             onChange={(e) => setEstimateUncertainty(e.target.checked)}
-            style={{ width: '18px', height: '18px', accentColor: 'var(--accent-cyan)', cursor: 'pointer' }}
+            style={{ width: '18px', height: '18px', accentColor: '#475569', cursor: 'pointer' }}
           />
-          <label htmlFor="uncertainty-toggle" style={{ cursor: 'pointer', fontSize: '0.92rem' }}>
-            <strong>Compute Spatial Uncertainty Quantification Map:</strong> Runs Monte-Carlo sampling to produce pixel-level epistemic uncertainty heatmaps.
+          <label htmlFor="uncertainty-toggle" style={{ cursor: 'pointer', fontSize: '0.92rem', color: '#0f172a' }}>
+            <strong>Spatial Uncertainty Quantification:</strong> Runs Test-Time Augmentation (TTA) geometric symmetry passes to map sub-pixel inferred detail variance.
+          </label>
+        </div>
+
+        {/* Wald Protocol Benchmark Checkbox */}
+        <div className="glass-panel" style={{ padding: '1.25rem 1.5rem', display: 'flex', alignItems: 'center', gap: '1rem', background: '#ffffff', border: '1px solid rgba(148,163,184,0.15)' }}>
+          <input
+            type="checkbox"
+            id="wald-toggle"
+            checked={runWaldValidation}
+            onChange={(e) => setRunWaldValidation(e.target.checked)}
+            style={{ width: '18px', height: '18px', accentColor: '#475569', cursor: 'pointer' }}
+          />
+          <label htmlFor="wald-toggle" style={{ cursor: 'pointer', fontSize: '0.92rem', color: '#0f172a' }}>
+            <strong>Wald Protocol Validation:</strong> Degrades input 4x to 40m, reconstructs to 10m, and benchmarks against original 10m Sentinel-2 with Bicubic baseline comparison (+Δ dB PSNR).
           </label>
         </div>
 
         {/* Progress Display */}
         {processing && (
-          <div className="glass-panel" style={{ padding: '1.5rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.88rem' }}>
+          <div className="glass-panel" style={{ padding: '1.5rem', background: '#ffffff', border: '1px solid rgba(148,163,184,0.15)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.88rem', color: '#0f172a' }}>
               <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Cpu size={16} className="animate-spin" color="var(--accent-cyan)" />
+                <Cpu size={16} className="animate-spin" color="#475569" />
                 {statusMessage}
               </span>
-              <span style={{ fontWeight: 700, color: 'var(--accent-cyan)' }}>{progress}%</span>
+              <span style={{ fontWeight: 700, color: '#334155' }}>{progress}%</span>
             </div>
-            <div style={{ height: '8px', backgroundColor: 'var(--bg-surface)', borderRadius: '4px', overflow: 'hidden' }}>
+            <div style={{ height: '8px', backgroundColor: '#e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
               <div style={{
                 height: '100%',
                 width: `${progress}%`,
-                background: 'var(--grad-primary)',
+                background: 'linear-gradient(90deg, #475569 0%, #94a3b8 100%)',
                 transition: 'width 0.4s ease'
               }} />
             </div>
@@ -386,24 +405,41 @@ export default function UploadPage() {
         )}
 
         {/* Submit Button */}
-        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%', marginTop: '0.5rem' }}>
           <button
             type="submit"
             className="btn btn-primary"
             id="btn-start-super-resolution"
             disabled={processing}
-            style={{ padding: '0.95rem 2rem', fontSize: '1.05rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}
+            style={{
+              padding: '1rem 2.4rem',
+              fontSize: '1.05rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.75rem',
+              background: '#172033',
+              color: '#f8fafc',
+              boxShadow: '0 10px 20px rgba(15, 23, 42, 0.12)',
+              border: '1px solid rgba(15, 23, 42, 0.18)',
+              minWidth: '320px',
+              borderRadius: '12px',
+              fontWeight: 700,
+              letterSpacing: '0.01em'
+            }}
           >
             <Sparkles size={20} />
             {processing ? 'Synthesizing 2.5m Super-Resolution...' : 'Start Generative Super-Resolution'}
           </button>
+        </div>
 
-          {!file && !useSample && (
-            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+        {!file && !useSample && (
+          <div style={{ display: 'flex', justifyContent: 'center', width: '100%' }}>
+            <span style={{ fontSize: '0.85rem', color: '#64748b' }}>
               (Click a Copernicus sample or upload a file to begin)
             </span>
-          )}
-        </div>
+          </div>
+        )}
       </form>
     </div>
   );

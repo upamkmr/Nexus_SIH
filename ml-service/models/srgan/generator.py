@@ -4,6 +4,7 @@ Optimized for multi-spectral Earth Observation (RGB + NIR 10m bands).
 Upscales 4x (10m -> 2.5m GSD).
 """
 
+import os
 import numpy as np
 try:
     from ..base_model import BaseSuperResolutionModel
@@ -77,21 +78,34 @@ except ImportError:
 class SentinelSRGAN(BaseSuperResolutionModel):
     def __init__(self, scale_factor: int = 4, in_channels: int = 4, weights_path: Optional[str] = None):
         super().__init__(name="Sentinel-2 SRGAN", scale_factor=scale_factor, in_channels=in_channels)
+        if weights_path is None:
+            # Auto-discover available checkpoints
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            candidates = [
+                os.path.join(base_dir, "checkpoints", "srgan_sentinel2_x4.pth"),
+                os.path.join(base_dir, "checkpoints", "generator_best.pth")
+            ]
+            for c in candidates:
+                if os.path.exists(c):
+                    weights_path = c
+                    break
         self.weights_path = weights_path
         self.model = None
         self._init_network()
 
     def _init_network(self):
-        """Initializes PyTorch model if available, otherwise prepares fast tensor backend."""
+        """Initializes PyTorch deep residual model if available and loads pretrained weights."""
         if torch is not None and SRGANGenerator is not None:
-            self.model = SRGANGenerator(in_c=self.in_channels, out_c=self.in_channels, scale=self.scale_factor)
-            if self.weights_path:
+            # Sentinel-2 network is natively configured for 4 bands (RGB + NIR 10m bands)
+            model_channels = 4
+            self.model = SRGANGenerator(in_c=model_channels, out_c=model_channels, scale=self.scale_factor)
+            if self.weights_path and os.path.exists(self.weights_path):
                 try:
                     state_dict = torch.load(self.weights_path, map_location="cpu")
                     self.model.load_state_dict(state_dict)
-                    print(f"Loaded SRGAN weights from {self.weights_path}")
+                    print(f"[SRGAN] Successfully loaded trained weights from: {self.weights_path}")
                 except Exception as e:
-                    print(f"Warning: Could not load weights from {self.weights_path}: {e}")
+                    print(f"[SRGAN Warning] Could not load state_dict from {self.weights_path}: {e}")
             self.model.eval()
         else:
             self.model = None
@@ -106,29 +120,40 @@ class SentinelSRGAN(BaseSuperResolutionModel):
 
         if self.model is not None:
             try:
-                with torch.no_grad():
-                    tensor = torch.from_numpy(tile).unsqueeze(0).float()
-                    sr_tensor = self.model(tensor)
-                    return sr_tensor.squeeze(0).cpu().numpy()
-            except Exception:
-                pass
+                # Adapt channel count for 4-band deep network
+                adapted_tile = tile
+                was_3_channel = False
+                if channels == 3:
+                    was_3_channel = True
+                    # Estimate 4th NIR band using remote sensing proxy (or replicate)
+                    nir_proxy = np.clip(1.1 * tile[1] - 0.1 * tile[0], 0.0, 1.0)
+                    adapted_tile = np.concatenate([tile, np.expand_dims(nir_proxy, axis=0)], axis=0)
 
-        # High-Fidelity Signal Reconstruction Pipeline
-        # Implements bicubic interpolation + unsharp masking high-frequency detail synthesis
+                with torch.no_grad():
+                    tensor = torch.from_numpy(adapted_tile).unsqueeze(0).float()
+                    sr_tensor = self.model(tensor)
+                    sr_np = sr_tensor.squeeze(0).cpu().numpy()
+                    if was_3_channel:
+                        return sr_np[:3]
+                    return sr_np
+            except Exception as e:
+                print(f"[SRGAN Inference Warning] PyTorch inference encountered: {e}. Falling back to analytical filter.")
+
+        # Analytical Filter Fallback:
+        # High-order bicubic interpolation + unsharp masking high-frequency detail synthesis
         target_h = h * self.scale_factor
         target_w = w * self.scale_factor
         sr_out = np.zeros((channels, target_h, target_w), dtype=np.float32)
 
+        from scipy.ndimage import map_coordinates, gaussian_filter
+
+        y_coords = np.linspace(0, h - 1, target_h)
+        x_coords = np.linspace(0, w - 1, target_w)
+        grid_y, grid_x = np.meshgrid(y_coords, x_coords, indexing='ij')
+
         for c in range(channels):
             band = tile[c]
-            # Fast bicubic interpolation
-            y_coords = np.linspace(0, h - 1, target_h)
-            x_coords = np.linspace(0, w - 1, target_w)
-            from scipy.ndimage import map_coordinates, gaussian_filter
-            grid_y, grid_x = np.meshgrid(y_coords, x_coords, indexing='ij')
             upscaled = map_coordinates(band, [grid_y, grid_x], order=3, mode='reflect')
-
-            # Synthesize high-frequency edge gradients (simulating super-resolution edge reconstruction)
             blurred = gaussian_filter(upscaled, sigma=1.0)
             high_pass = upscaled - blurred
             enhanced = upscaled + 1.25 * high_pass

@@ -5,7 +5,7 @@ class MLBridgeService {
   constructor() {
     this.client = axios.create({
       baseURL: ML_SERVICE_URL,
-      timeout: 120000 // 2 minutes timeout for deep learning inference
+      timeout: 300000 // 5 minutes timeout for deep learning inference
     });
   }
 
@@ -25,17 +25,21 @@ class MLBridgeService {
 
   async runSuperResolution({
     imagePath,
-    modelType = 'swin_ir',
+    modelType = 'srgan',
     scaleFactor = 4,
     estimateUncertainty = true,
-    bands = ['B04', 'B03', 'B02']
+    bands = ['B04', 'B03', 'B02'],
+    referencePath = null,
+    runWaldValidation = false
   }) {
     const payload = {
       image_path: imagePath,
       model_type: modelType,
       scale_factor: Number(scaleFactor),
       estimate_uncertainty: Boolean(estimateUncertainty),
-      bands: Array.isArray(bands) ? bands : ['B04', 'B03', 'B02']
+      bands: Array.isArray(bands) ? bands : ['B04', 'B03', 'B02'],
+      reference_path: referencePath || null,
+      run_wald_validation: Boolean(runWaldValidation)
     };
 
     const response = await this.client.post('/api/v1/predict', payload);
